@@ -1,4 +1,4 @@
-# ha-lksystems
+# Custom Home Assistant integration for LK Systems
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs) 
 
 ## Summary
