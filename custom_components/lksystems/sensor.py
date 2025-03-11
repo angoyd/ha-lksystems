@@ -1,4 +1,4 @@
-"""Support for CheckWatt sensors."""
+"""Support for LK Systems sensors."""
 
 from __future__ import annotations
 
