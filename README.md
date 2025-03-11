@@ -4,7 +4,7 @@
 ## Summary
 This integration uses cloud polling from the API provied by LK Systems.
 
-As of now the support is limited to the WaterMeter [Cubic Secure](https://www.lksystems.se/sv/produkter/teknisk-armatur/vattenfelsutrustning/vattenfelsbrytare/lk-cubicsecure-77792594) but support for other LK components as LK Arc will follow.
+As of now the support is in a very early stage use at own risk, breaking changes will most probably follow. Today it is limited to the WaterMeter [Cubic Secure](https://www.lksystems.se/sv/produkter/teknisk-armatur/vattenfelsutrustning/vattenfelsbrytare/lk-cubicsecure-77792594) but support for other LK components as LK Arc will follow.
 
 # Installation
 ### HACS installation
