@@ -73,6 +73,16 @@ LK_CUBICSECURE_SENSORS: dict[str, SensorEntityDescription] = {
         state_class=SensorStateClass.MEASUREMENT,
         translation_key="temp_water_max_sensor",
     ),
+    "waterPressure": SensorEntityDescription(
+        key="waterPressure",
+        name="Water Pressure",
+        icon="mdi:gauge-low",
+        device_class=SensorDeviceClass.PRESSURE,
+        unit_of_measurement="hPa",
+        native_unit_of_measurement="hPa",
+        state_class=SensorStateClass.MEASUREMENT,
+        translation_key="water_pressure_sensor",
+    ),
 }
 
 
@@ -96,6 +106,8 @@ async def async_setup_entry(
         if key == "tempWaterMin":
             entities.append(LKCubicSensor(coordinator, description))
         if key == "tempWaterMax":
+            entities.append(LKCubicSensor(coordinator, description))
+        if key == "waterPressure":
             entities.append(LKCubicSensor(coordinator, description))
 
     async_add_entities(entities, True)

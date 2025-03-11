@@ -109,7 +109,7 @@ class LKSystemsManager:
     async def get_cubic_secure_messurement(self, cubic_identity: str):
         """Fetch Cubic secure messurement"""
         try:
-            endpoint = f"service/cubic/secure/{cubic_identity}/measurement/1"
+            endpoint = f"service/cubic/secure/{cubic_identity}/measurement/0"
 
             # Define headers with the JwtToken
             headers = {
