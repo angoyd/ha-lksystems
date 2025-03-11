@@ -89,7 +89,7 @@ LK_CUBICSECURE_SENSORS: dict[str, SensorEntityDescription] = {
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    """Set up the CheckWatt sensor."""
+    """Set up the LK system cubic sensor."""
     coordinator: LKSystemCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[AbstractLkCubicSensorSensor] = []
     Lk_data: LkStructureResp = coordinator.data
