@@ -1,4 +1,4 @@
-"""Config flow for CheckWatt integration."""
+"""Config flow for LK Systems integration."""
 
 from __future__ import annotations
 
