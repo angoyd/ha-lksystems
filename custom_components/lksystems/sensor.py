@@ -33,6 +33,16 @@ DEFAULT_SCAN_INTERVAL = timedelta(seconds=30)
 _LOGGER = logging.getLogger(__name__)
 
 LK_CUBICSECURE_SENSORS: dict[str, SensorEntityDescription] = {
+    "volumetotalday": SensorEntityDescription(
+        key="volumeTotalDay",
+        name="Total Volume Day",
+        icon="mdi:water",
+        device_class=SensorDeviceClass.WATER,
+        unit_of_measurement="L",
+        native_unit_of_measurement="L",
+        state_class=SensorStateClass.TOTAL,
+        translation_key="volume_total_day_sensor",
+    ),
     "volumetotal": SensorEntityDescription(
         key="volumeTotal",
         name="Total Volume",
@@ -100,6 +110,8 @@ async def async_setup_entry(
     )
     for key, description in LK_CUBICSECURE_SENSORS.items():
         if key == "volumetotal":
+            entities.append(LKCubicSensor(coordinator, description))
+        if key == "volumetotalday":
             entities.append(LKCubicSensor(coordinator, description))
         if key == "tempWaterAverage":
             entities.append(LKCubicSensor(coordinator, description))
