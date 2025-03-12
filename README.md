@@ -15,7 +15,7 @@ As of now the support is in a very early stage use at own risk, breaking changes
 1. Make sure you have git installed on your machine.
 2. Navigate to you home assistant configuration folder.
 3. Create a `custom_components` folder of it does not exist, navigate down into it after creation.
-4. Execute the following command: `git clone https://github.com/faanskit/ha-checkwatt.git checkwatt`
+4. Execute the following command: `git clone https://github.com/angoyd/ha-lksystems.git lksystems`
 5. Restart Home-Assistant.
 
 ## Enable the integration
