@@ -6,6 +6,7 @@ from datetime import time, timedelta
 import logging
 import random
 from typing import TypedDict
+import time
 
 import voluptuous as vol
 
@@ -186,6 +187,25 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                         "Failed to get cubic secure messurement, abort update"
                     )
                     raise UpdateFailed("Unknown error get_cubic_secure_messurement")
+                if lk_inst.cubic_secure_messurement is not None:
+                    # Get time as unix timestamp
+                    timestamp = int(time.time())
+                    if (
+                        timestamp - lk_inst.cubic_secure_messurement["cacheUpdated"]
+                        > 3600
+                    ):
+                        _LOGGER.debug(
+                            "Cubic secure messurement is older than 1 hour, force update"
+                        )
+                        if not await lk_inst.get_cubic_secure_messurement(
+                            self._cubic_identity, force_update=True
+                        ):
+                            _LOGGER.error(
+                                "Failed to get cubic secure messurement, abort update"
+                            )
+                            raise UpdateFailed(
+                                "Unknown error get_cubic_secure_messurement"
+                            )
 
                 resp["cubic_last_messurement"] = lk_inst.cubic_secure_messurement
 

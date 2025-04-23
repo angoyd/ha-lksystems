@@ -8,6 +8,7 @@ import json
 import logging
 import re
 
+
 from aiohttp import ClientError, ClientResponseError, ClientSession
 from dateutil.relativedelta import relativedelta
 
@@ -106,10 +107,16 @@ class LKSystemsManager:
         except (ClientResponseError, ClientError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
-    async def get_cubic_secure_messurement(self, cubic_identity: str):
+    async def get_cubic_secure_messurement(
+        self, cubic_identity: str, force_update=False
+    ):
         """Fetch Cubic secure messurement"""
         try:
-            endpoint = f"service/cubic/secure/{cubic_identity}/measurement/0"
+            if force_update:
+                _LOGGER.debug("Force update from LK API")
+                endpoint = f"service/cubic/secure/{cubic_identity}/measurement/1"
+            else:
+                endpoint = f"service/cubic/secure/{cubic_identity}/measurement/0"
 
             # Define headers with the JwtToken
             headers = {
@@ -123,6 +130,7 @@ class LKSystemsManager:
                 response.raise_for_status()
                 if response.status == 200:
                     self._cubic_secure_messurement = await response.json()
+
                     return True
 
                 _LOGGER.error(
