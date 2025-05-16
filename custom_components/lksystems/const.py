@@ -17,3 +17,6 @@ CUBIC_SECURE_MODEL = "Cubic Secure"
 #
 # C_ADR = "street_address"
 CONF_UPDATE_INTERVAL = "update_interval"
+
+# Default update interval in minutes
+DEFAULT_UPDATE_INTERVAL = 5
