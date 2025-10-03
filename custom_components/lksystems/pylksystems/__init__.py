@@ -29,7 +29,7 @@ class LKSystemsManager:
         self.userid = None
         self.jwt_token = None
         self.refresh_token = None
-        self._cubic_secure_messurement = None
+        self._cubic_secure_measurement = None
         self._user_structure = None
 
     async def __aenter__(self):
@@ -107,10 +107,10 @@ class LKSystemsManager:
         except (ClientResponseError, ClientError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
-    async def get_cubic_secure_messurement(
+    async def get_cubic_secure_measurement(
         self, cubic_identity: str, force_update=False
     ):
-        """Fetch Cubic secure messurement"""
+        """Fetch Cubic secure measurement"""
         try:
             if force_update:
                 _LOGGER.debug("Force update from LK API")
@@ -129,7 +129,7 @@ class LKSystemsManager:
             ) as response:
                 response.raise_for_status()
                 if response.status == 200:
-                    self._cubic_secure_messurement = await response.json()
+                    self._cubic_secure_measurement = await response.json()
 
                     return True
 
@@ -144,12 +144,12 @@ class LKSystemsManager:
             return await self.handle_client_error(endpoint, headers, error)
 
     @property
-    def cubic_secure_messurement(self):
-        """Property for Cubic Secure messurement"""
-        return self._cubic_secure_messurement
+    def cubic_secure_measurement(self):
+        """Property for Cubic Secure measurement"""
+        return self._cubic_secure_measurement
 
     async def get_user_structure(self):
-        """Fetch Cubic secure messurement"""
+        """Fetch user secure measurement"""
         try:
             endpoint = f"service/users/user/{self.userid}/structure/1"
 

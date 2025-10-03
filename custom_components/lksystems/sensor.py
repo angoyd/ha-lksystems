@@ -101,7 +101,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up the LK system cubic sensor."""
     coordinator: LKSystemCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities: list[AbstractLkCubicSensorSensor] = []
+    entities: list[AbstractLkCubicSensor] = []
     Lk_data: LkStructureResp = coordinator.data
 
     _LOGGER.debug(
@@ -208,7 +208,7 @@ class LKCubicSensor(AbstractLkCubicSensor):
     @property
     def native_value(self) -> str | None:
         """Get the latest state value."""
-        if self._data_key in self._coordinator.data["cubic_last_messurement"]:
-            return self._coordinator.data["cubic_last_messurement"][self._data_key]
+        if self._data_key in self._coordinator.data["cubic_last_measurement"]:
+            return self._coordinator.data["cubic_last_measurement"][self._data_key]
 
         return None

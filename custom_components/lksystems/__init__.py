@@ -42,7 +42,7 @@ class LkStructureResp(TypedDict):
     country: str
     ownerId: str
     cubic_machine_info: LkStructureMashine
-    cubic_last_messurement: LkCubicSecureResp
+    cubic_last_measurement: LkCubicSecureResp
     cacheUpdated: int
     update_time: str
     next_update_time: str
@@ -182,32 +182,32 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                 ):
                     self._cubic_identity = resp["cubic_machine_info"]["identity"]
 
-                if not await lk_inst.get_cubic_secure_messurement(self._cubic_identity):
+                if not await lk_inst.get_cubic_secure_measurement(self._cubic_identity):
                     _LOGGER.error(
-                        "Failed to get cubic secure messurement, abort update"
+                        "Failed to get cubic secure measurement, abort update"
                     )
-                    raise UpdateFailed("Unknown error get_cubic_secure_messurement")
-                if lk_inst.cubic_secure_messurement is not None:
+                    raise UpdateFailed("Unknown error get_cubic_secure_measurement")
+                if lk_inst.cubic_secure_measurement is not None:
                     # Get time as unix timestamp
                     timestamp = int(time.time())
                     if (
-                        timestamp - lk_inst.cubic_secure_messurement["cacheUpdated"]
+                        timestamp - lk_inst.cubic_secure_measurement["cacheUpdated"]
                         > 3600
                     ):
                         _LOGGER.debug(
-                            "Cubic secure messurement is older than 1 hour, force update"
+                            "Cubic secure measurement is older than 1 hour, force update"
                         )
-                        if not await lk_inst.get_cubic_secure_messurement(
+                        if not await lk_inst.get_cubic_secure_measurement(
                             self._cubic_identity, force_update=True
                         ):
                             _LOGGER.error(
-                                "Failed to get cubic secure messurement, abort update"
+                                "Failed to get cubic secure measurement, abort update"
                             )
                             raise UpdateFailed(
-                                "Unknown error get_cubic_secure_messurement"
+                                "Unknown error get_cubic_secure_measurement"
                             )
 
-                resp["cubic_last_messurement"] = lk_inst.cubic_secure_messurement
+                resp["cubic_last_measurement"] = lk_inst.cubic_secure_measurement
 
                 update_time = dt_util.now().strftime("%Y-%m-%d %H:%M:%S")
                 next_update = dt_util.now() + timedelta(
