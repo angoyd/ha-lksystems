@@ -93,6 +93,118 @@ LK_CUBICSECURE_SENSORS: dict[str, SensorEntityDescription] = {
         state_class=SensorStateClass.MEASUREMENT,
         translation_key="water_pressure_sensor",
     ),
+    "ambientTemp": SensorEntityDescription(
+        key="tempAmbient",
+        name="Ambient Temperature",
+        icon="mdi:thermometer",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        unit_of_measurement="°C",
+        native_unit_of_measurement="°C",
+        state_class=SensorStateClass.MEASUREMENT,
+        translation_key="temp_ambient_sensor",
+    ),
+    "lastStatus": SensorEntityDescription(
+        key="lastStatus",
+        name="Last Status",
+        icon="mdi:information-outline",
+        device_class=None,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="last_status_sensor",
+    ),
+    "cacheUpdated": SensorEntityDescription(
+        key="cacheUpdated",
+        name="Cache Updated",
+        icon="mdi:information-outline",
+        device_class=None,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="cache_updated_sensor",
+    ),
+    "leak.leakState": SensorEntityDescription(
+        key="leak.leakState",
+        name="Leak State",
+        icon="mdi:water-off",
+        device_class=None,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="leak_state_sensor",
+    ),
+    "leak.meanFlow": SensorEntityDescription(
+        key="leak.meanFlow",
+        name="Leak Mean Flow",
+        icon="mdi:water-off",
+        device_class=None,
+        unit_of_measurement="L/h",
+        native_unit_of_measurement="L/h",
+        state_class=SensorStateClass.MEASUREMENT,
+        translation_key="leak_mean_flow_sensor",
+    ),
+    "leak.dateStartedAt": SensorEntityDescription(
+        key="leak.dateStartedAt",
+        name="Leak Date Started At",
+        icon="mdi:calendar-start",
+        device_class=None,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="leak_date_started_at_sensor",
+    ),
+    "leak.dateUpdatedAt": SensorEntityDescription(
+        key="leak.dateUpdatedAt",
+        name="Leak Date Updated At",
+        icon="mdi:calendar-sync",
+        device_class=None,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="leak_date_updated_at_sensor",
+    ),
+    "leak.acknowledged": SensorEntityDescription(
+        key="leak.acknowledged",
+        name="Leak Acknowledged",
+        icon="mdi:check-circle-outline",
+        device_class=None,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="leak_acknowledged_sensor",
+    ),
+}
+LK_CUBICSECURE_CONFIG_SENSORS: dict[str, SensorEntityDescription] = {
+    "valveState": SensorEntityDescription(
+        key="valveState",
+        name="Valve State",
+        icon="mdi:valve",
+        device_class=None,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="valve_state_sensor",
+    ),
+    "firmwareVersion": SensorEntityDescription(
+        key="firmwareVersion",
+        name="Firmware Version",
+        icon="mdi:chip",
+        device_class=None,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="firmware_version_sensor",
+    ),
+    "hardwareVersion": SensorEntityDescription(
+        key="hardwareVersion",
+        name="Hardware Version",
+        icon="mdi:chip",
+        device_class=None,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="hardware_version_sensor",
+    ),
 }
 
 
@@ -121,7 +233,30 @@ async def async_setup_entry(
             entities.append(LKCubicSensor(coordinator, description))
         if key == "waterPressure":
             entities.append(LKCubicSensor(coordinator, description))
+        if key == "ambientTemp":
+            entities.append(LKCubicSensor(coordinator, description))
+        if key == "lastStatus":
+            entities.append(LKCubicSensor(coordinator, description))
+        if key == "cacheUpdated":
+            entities.append(LKCubicSensor(coordinator, description))
+        if key == "leak.leakState":
+            entities.append(LKCubicSensor(coordinator, description))
+        if key == "leak.meanFlow":
+            entities.append(LKCubicSensor(coordinator, description))
+        if key == "leak.dateStartedAt":
+            entities.append(LKCubicSensor(coordinator, description))
+        if key == "leak.dateUpdatedAt":
+            entities.append(LKCubicSensor(coordinator, description))
+        if key == "leak.acknowledged":
+            entities.append(LKCubicSensor(coordinator, description))
 
+    for key, description in LK_CUBICSECURE_CONFIG_SENSORS.items():
+        if key == "valveState":
+            entities.append(LKCubicSensor(coordinator, description, data_source="configuration"))
+        if key == "firmwareVersion":
+            entities.append(LKCubicSensor(coordinator, description, data_source="configuration"))
+        if key == "hardwareVersion":
+            entities.append(LKCubicSensor(coordinator, description, data_source="configuration"))
     async_add_entities(entities, True)
 
 
@@ -170,9 +305,11 @@ class LKCubicSensor(AbstractLkCubicSensor):
         self,
         coordinator: LKSystemCoordinator,
         description: SensorEntityDescription,
+        data_source: str = "measurement",
     ) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator=coordinator, description=description)
+        self._data_source = data_source
         self._data_key = description.key
         self._attr_unique_id = f'LkUid_{description.key}_{coordinator.data["cubic_machine_info"]["identity"]}'
         # self.native_unit_of_measurement = description.native_unit_of_measurement
@@ -208,7 +345,30 @@ class LKCubicSensor(AbstractLkCubicSensor):
     @property
     def native_value(self) -> str | None:
         """Get the latest state value."""
-        if self._data_key in self._coordinator.data["cubic_last_measurement"]:
-            return self._coordinator.data["cubic_last_measurement"][self._data_key]
+        if self._data_source == "configuration":
+            if self._data_key in self._coordinator.data["cubic_configuration"]:
+                return self._coordinator.data["cubic_configuration"][self._data_key]
+            elif '.' in self._data_key:
+                keys = self._data_key.split('.')
+                value = self._coordinator.data["cubic_configuration"]
+                for key in keys:
+                    value = value.get(key, None)
+                    if value is None:
+                        return None
+                return value
+            return None
+        elif self._data_source == "measurement":
+            _LOGGER.info("Getting measurement for key: %s", self._data_key)
+            _LOGGER.info(self._coordinator.data["cubic_last_measurement"])
+            if self._data_key in self._coordinator.data["cubic_last_measurement"]:
+                return self._coordinator.data["cubic_last_measurement"][self._data_key]
+            elif '.' in self._data_key:
+                keys = self._data_key.split('.')
+                value = self._coordinator.data["cubic_last_measurement"]
+                for key in keys:
+                    value = value.get(key, None)
+                    if value is None:
+                        return None
+                return value
 
         return None
