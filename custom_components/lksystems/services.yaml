@@ -1,0 +1,200 @@
+pause_leak_detection:
+  name: Pause leak detection
+  description: Will pause leak detection for the given time period
+  fields:
+    device_id:
+      name: Device id
+      description: The device id of LK Systems device to pause leak detection on
+      selector:
+        device:
+          integration: "lksystems"
+      required: true
+    seconds:
+      name: Seconds
+      description: Seconds to pause leak detection default is 3600 (1 hour)
+      default: 3600
+      selector:
+        number:
+          min: 0
+          max: 1000000
+          step: 1
+          mode: box
+      required: true
+
+close_valve:
+  name: Close valve
+  description: Close the main water valve
+  fields:
+    device_id:
+      name: Device id
+      description: The device id of LK Systems device to pause leak detection on
+      selector:
+        device:
+          integration: "lksystems"
+      required: true
+open_valve:
+  name: Open valve
+  description: Open the main water valve
+  fields:
+    device_id:
+      name: Device id
+      description: The device id of LK Systems device to pause leak detection on
+      selector:
+        device:
+          integration: "lksystems"
+      required: true
+set_pressure_test_schedule:
+  name: Set pressure test schedule
+  description: Set the schedule for pressure tests
+  fields:
+    device_id:
+      name: Device id
+      description: The device id of LK Systems device to pause leak detection on
+      selector:
+        device:
+          integration: "lksystems"
+      required: true
+    hour:
+      name: Hour
+      description: Hour of the day to run the pressure test (0-23)
+      default: 4
+      selector:
+        number:
+          min: 0
+          max: 23
+          step: 1
+          mode: box
+      required: true
+    minute:
+      name: Minute
+      description: Minute of the hour to run the pressure test (0-59)
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 59
+          step: 1
+          mode: box
+      required: true
+
+set_thresholds:
+  name: Set thresholds
+  description: Set the thresholds for leak detection
+  fields:
+    device_id:
+      name: Device id
+      description: The device id of LK Systems device to pause leak detection on
+      selector:
+        device:
+          integration: "lksystems"
+      required: true
+    pressure_sensitivity:
+      name: Pressure sensitivity
+      description: Pressure drop threshold in bar (e.g., 0.2 for 0.2 bar) default is 0.3
+      default: 0.3
+      selector:
+        number:
+          min: 0.0
+          max: 10.0
+          step: 0.1
+          mode: box
+      required: true
+    pressure_test_duration:
+      name: Test duration
+      description: Duration of the pressure test in seconds default is 45
+      default: 45
+      selector:
+        number:
+          min: 1
+          max: 600
+          step: 1
+          mode: box
+      required: true
+    pressure_close_delay:
+      name: Close delay
+      description: Delay in seconds before closing the valve for the pressure test default is 255600
+      default: 255600
+      selector:
+        number:
+          min: 1
+          max: 255600
+          step: 1
+          mode: box
+      required: true
+    pressure_notification_delay:
+      name: Notification delay
+      description: Delay in seconds before sending a leak notification default is 169200
+      default: 169200
+      selector:
+        number:
+          min: 1
+          max: 169200
+          step: 1
+          mode: box
+      required: true
+    medium_leak_threshold:
+      name: Medium leak threshold
+      description: Threshold in liter/hour for medium leak notification default is 5
+      default: 5.0
+      selector:
+        number:
+          min: 0.1
+          max: 100.0
+          step: 0.1
+          mode: box
+      required: true
+    medium_leak_close_delay:
+      name: Medium leak close delay
+      description: Delay in seconds before closing the valve for medium leak default is 2700
+      default: 2700
+      selector:
+        number:
+          min: 1
+          max: 36000
+          step: 1
+          mode: box
+      required: true
+    medium_leak_notification_delay:
+      name: Medium leak notification delay
+      description: Delay in seconds before sending a medium leak notification default is 2700
+      default: 2700
+      selector:
+        number:
+          min: 1
+          max: 36000
+          step: 1
+          mode: box
+      required: true
+    large_leak_threshold:
+      name: Large leak threshold
+      description: Threshold in liter/hour for large leak notification default is 1500
+      default: 1500.0
+      selector:
+        number:
+          min: 0.1
+          max: 2500.0
+          step: 0.1
+          mode: box
+      required: true
+    large_leak_close_delay:
+      name: Large leak close delay
+      description: Delay in seconds before closing the valve for large leak default is 90
+      default: 90
+      selector:
+        number:
+          min: 1
+          max: 120
+          step: 1
+          mode: box
+      required: true
+    large_leak_notification_delay:
+      name: Large leak notification delay
+      description: Delay in seconds before sending a large leak notification default is 90
+      default: 90
+      selector:
+        number:
+          min: 1
+          max: 120
+          step: 1
+          mode: box
+      required: true

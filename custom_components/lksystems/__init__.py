@@ -1,10 +1,9 @@
 """The LK Systems integration."""
 
 from __future__ import annotations
-from .pylksystems import LKSystemsManager
+from .pylksystems import LKSystemsManager, LKThresholds, LKPressureThresholds
 from datetime import time, timedelta
 import logging
-import random
 from typing import TypedDict
 import time
 
@@ -13,6 +12,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.typing import ConfigType
 
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import config_validation as cv
@@ -25,6 +25,7 @@ from .const import (
     DOMAIN,
     INTEGRATION_NAME,
 )
+from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,7 +34,6 @@ PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 class LkStructureResp(TypedDict):
     """API response structure"""
-
     realestateId: str
     name: str
     city: str
@@ -42,15 +42,41 @@ class LkStructureResp(TypedDict):
     country: str
     ownerId: str
     cubic_machine_info: LkStructureMashine
-    cubic_last_messurement: LkCubicSecureResp
+    cubic_last_measurement: LkCubicSecureResp
+    cubic_configuration: LKCubicSecureConfigResp
     cacheUpdated: int
     update_time: str
     next_update_time: str
 
+class LKCubicSecureConfigResp(TypedDict):
+    """Cubic secure configuration structure"""
+    firmwareVersion: str
+    hardwareVersion: int
+    timeZonePosix: str
+    pressureTestSchedule: LKPressureTestSchedule
+    valveState: str
+    thresholds: LKThresholds
+    links: list
+    paired: dict
+    muteLeak: int
+    cacheTimer: int
+    cacheUpdated: int
+
+class LKPressureTestSchedule(TypedDict):
+    """Pressure test schedule structure"""
+    hour: int
+    minute: int
+
+class LKLeakInfo(TypedDict):
+    """Leak info structure"""
+    leakState: str
+    meanFlow: float
+    dateStartedAt: int
+    dateUpdatedAt: int
+    acknowledged: bool
 
 class LkCubicSecureResp(TypedDict):
     """API response structure"""
-
     serialNumber: str
     connectionState: str
     rssi: int
@@ -65,11 +91,7 @@ class LkCubicSecureResp(TypedDict):
     tempWaterMax: float
     volumeTotal: int
     waterPressure: int
-    leakState: str
-    leak_meanFlow: int
-    leak_dateStartedAt: int
-    leak_dateUpdatedAt: int
-    leak_acknowledged: bool
+    leak: LKLeakInfo
     cacheUpdated: int
 
 
@@ -108,7 +130,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     entry.async_on_unload(entry.add_update_listener(update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
+    await async_setup_services(hass, entry)
     return True
 
 
@@ -174,6 +196,10 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                         ),
                         None,
                     ),
+                    "cubic_last_measurement": None,
+                    "update_time": None,
+                    "next_update_time": None,
+                    "cubic_configuration": None,
                 }
 
                 if (
@@ -182,32 +208,58 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                 ):
                     self._cubic_identity = resp["cubic_machine_info"]["identity"]
 
-                if not await lk_inst.get_cubic_secure_messurement(self._cubic_identity):
+                if not await lk_inst.get_cubic_secure_measurement(self._cubic_identity):
                     _LOGGER.error(
-                        "Failed to get cubic secure messurement, abort update"
+                        "Failed to get cubic secure measurement, abort update"
                     )
-                    raise UpdateFailed("Unknown error get_cubic_secure_messurement")
-                if lk_inst.cubic_secure_messurement is not None:
+                    raise UpdateFailed("Unknown error get_cubic_secure_measurement")
+                if lk_inst.cubic_secure_measurement is not None:
                     # Get time as unix timestamp
                     timestamp = int(time.time())
                     if (
-                        timestamp - lk_inst.cubic_secure_messurement["cacheUpdated"]
+                        timestamp - lk_inst.cubic_secure_measurement["cacheUpdated"]
                         > 3600
                     ):
                         _LOGGER.debug(
-                            "Cubic secure messurement is older than 1 hour, force update"
+                            "Cubic secure measurement is older than 1 hour, force update"
                         )
-                        if not await lk_inst.get_cubic_secure_messurement(
+                        if not await lk_inst.get_cubic_secure_measurement(
                             self._cubic_identity, force_update=True
                         ):
                             _LOGGER.error(
-                                "Failed to get cubic secure messurement, abort update"
+                                "Failed to get cubic secure measurement, abort update"
                             )
                             raise UpdateFailed(
-                                "Unknown error get_cubic_secure_messurement"
+                                "Unknown error get_cubic_secure_measurement"
                             )
 
-                resp["cubic_last_messurement"] = lk_inst.cubic_secure_messurement
+                resp["cubic_last_measurement"] = lk_inst.cubic_secure_measurement
+                if not await lk_inst.get_cubic_secure_configuration(self._cubic_identity):
+                    _LOGGER.error(
+                        "Failed to get cubic secure configuration, abort update"
+                    )
+                    raise UpdateFailed("Unknown error get_cubic_secure_measurement")
+                if lk_inst.cubic_secure_configuration is not None:
+                    # Get time as unix timestamp
+                    timestamp = int(time.time())
+                    if (
+                        timestamp - lk_inst.cubic_secure_configuration["cacheUpdated"]
+                        > 3600
+                    ):
+                        _LOGGER.debug(
+                            "Cubic secure configuration is older than 1 hour, force update"
+                        )
+                        if not await lk_inst.get_cubic_secure_configuration(
+                            self._cubic_identity, force_update=True
+                        ):
+                            _LOGGER.error(
+                                "Failed to get cubic secure configuration, abort update"
+                            )
+                            raise UpdateFailed(
+                                "Unknown error get_cubic_secure_configuration"
+                            )
+
+                resp["cubic_configuration"] = lk_inst.cubic_secure_configuration
 
                 update_time = dt_util.now().strftime("%Y-%m-%d %H:%M:%S")
                 next_update = dt_util.now() + timedelta(
