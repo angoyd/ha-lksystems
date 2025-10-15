@@ -35,6 +35,7 @@ from .const import (
     DOMAIN,
     INTEGRATION_NAME,
     LK_CUBICSECURE_SENSORS,
+    LK_CUBICSECURE_CONFIG_SENSORS,
     MANUFACTURER,
 )
 
@@ -86,6 +87,42 @@ async def async_setup_entry(
                         entities.append(LKCubicSensor(coordinator, description))
                     if key == "waterPressure":
                         entities.append(LKCubicSensor(coordinator, description))
+                    if key == "ambientTemp":
+                        entities.append(LKCubicSensor(coordinator, description))
+                    if key == "lastStatus":
+                        entities.append(LKCubicSensor(coordinator, description))
+                    if key == "cacheUpdated":
+                        entities.append(LKCubicSensor(coordinator, description))
+                    if key == "leak.leakState":
+                        entities.append(LKCubicSensor(coordinator, description))
+                    if key == "leak.meanFlow":
+                        entities.append(LKCubicSensor(coordinator, description))
+                    if key == "leak.dateStartedAt":
+                        entities.append(LKCubicSensor(coordinator, description))
+                    if key == "leak.dateUpdatedAt":
+                        entities.append(LKCubicSensor(coordinator, description))
+                    if key == "leak.acknowledged":
+                        entities.append(LKCubicSensor(coordinator, description))
+
+                for key, description in LK_CUBICSECURE_CONFIG_SENSORS.items():
+                    if key == "valveState":
+                        entities.append(
+                            LKCubicSensor(
+                                coordinator, description, data_source="configuration"
+                            )
+                        )
+                    if key == "firmwareVersion":
+                        entities.append(
+                            LKCubicSensor(
+                                coordinator, description, data_source="configuration"
+                            )
+                        )
+                    if key == "hardwareVersion":
+                        entities.append(
+                            LKCubicSensor(
+                                coordinator, description, data_source="configuration"
+                            )
+                        )
 
                 async_add_entities(entities, True)
 
@@ -815,12 +852,12 @@ class AbstractLkCubicSensor(CoordinatorEntity[LKSystemCoordinator], SensorEntity
         self._coordinator = coordinator
         self._device_model = CUBIC_SECURE_MODEL
         self._device_name = (
-            f'Cubic Secure {coordinator.data["cubic_machine_info"]["zone"]["zoneName"]}'
+            f"Cubic Secure {coordinator.data['cubic_machine_info']['zone']['zoneName']}"
         )
         self._id = coordinator.data["cubic_machine_info"]["identity"]
         self.entity_description = description
         self.native_unit_of_measurement = description.native_unit_of_measurement
-        self._attr_unique_id = f'LkUid_{description.key}_{coordinator.data["cubic_machine_info"]["identity"]}'
+        self._attr_unique_id = f"LkUid_{description.key}_{coordinator.data['cubic_machine_info']['identity']}"
         self._attr_extra_state_attributes = {}
 
     @property
@@ -843,11 +880,13 @@ class LKCubicSensor(AbstractLkCubicSensor):
         self,
         coordinator: LKSystemCoordinator,
         description: SensorEntityDescription,
+        data_source: str = "measurement",
     ) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator=coordinator, description=description)
+        self._data_source = data_source
         self._data_key = description.key
-        self._attr_unique_id = f'LkUid_{description.key}_{coordinator.data["cubic_machine_info"]["identity"]}'
+        self._attr_unique_id = f"LkUid_{description.key}_{coordinator.data['cubic_machine_info']['identity']}"
         # self.native_unit_of_measurement = description.native_unit_of_measurement
         self._attr_extra_state_attributes = {}
 
@@ -881,7 +920,30 @@ class LKCubicSensor(AbstractLkCubicSensor):
     @property
     def native_value(self) -> str | None:
         """Get the latest state value."""
-        if self._data_key in self._coordinator.data["cubic_last_messurement"]:
-            return self._coordinator.data["cubic_last_messurement"][self._data_key]
+        if self._data_source == "configuration":
+            if self._data_key in self._coordinator.data["cubic_configuration"]:
+                return self._coordinator.data["cubic_configuration"][self._data_key]
+            elif "." in self._data_key:
+                keys = self._data_key.split(".")
+                value = self._coordinator.data["cubic_configuration"]
+                for key in keys:
+                    value = value.get(key, None)
+                    if value is None:
+                        return None
+                return value
+            return None
+        elif self._data_source == "measurement":
+            _LOGGER.debug("Getting measurement for key: %s", self._data_key)
+            _LOGGER.debug(self._coordinator.data["cubic_last_measurement"])
+            if self._data_key in self._coordinator.data["cubic_last_measurement"]:
+                return self._coordinator.data["cubic_last_measurement"][self._data_key]
+            elif "." in self._data_key:
+                keys = self._data_key.split(".")
+                value = self._coordinator.data["cubic_last_measurement"]
+                for key in keys:
+                    value = value.get(key, None)
+                    if value is None:
+                        return None
+                return value
 
         return None

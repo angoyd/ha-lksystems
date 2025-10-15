@@ -9,10 +9,10 @@
   "documentation": "https://github.com/angoyd/ha-lksystems#readme",
   "homekit": {},
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/faanskit/ha-lksystems/issues",
+  "issue_tracker": "https://github.com/angoyd/ha-lksystems/issues",
   "requirements": ["aiohttp>=3.9.1"],
   "ssdp": [],
-  "version": "0.0.1",
+  "version": "0.0.2",
   "zeroconf": []
 }
 
