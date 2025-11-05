@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 import logging
+from typing import Any, Dict, Optional
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -12,23 +12,32 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfEnergy
+from homeassistant.const import (
+    PERCENTAGE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    UnitOfTemperature,
+)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.update_coordinator import (
+    CoordinatorEntity,
+    DataUpdateCoordinator,
+)
+import homeassistant.util.dt as dt_util
 
-from . import LKSystemCoordinator, LkStructureResp
+from . import LKSystemCoordinator
 from .const import (
     ATTRIBUTION,
-    DOMAIN,
-    MANUFACTURER,
-    CUBIC_SECURE_MODEL,
     C_NEXT_UPDATE_TIME,
     C_UPDATE_TIME,
+    CUBIC_SECURE_MODEL,
+    DOMAIN,
+    INTEGRATION_NAME,
+    LK_CUBICSECURE_SENSORS,
+    LK_CUBICSECURE_CONFIG_SENSORS,
+    MANUFACTURER,
 )
-
-DEFAULT_SCAN_INTERVAL = timedelta(seconds=30)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -209,7 +218,9 @@ LK_CUBICSECURE_CONFIG_SENSORS: dict[str, SensorEntityDescription] = {
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the LK system cubic sensor."""
     coordinator: LKSystemCoordinator = hass.data[DOMAIN][entry.entry_id]
@@ -277,12 +288,12 @@ class AbstractLkCubicSensor(CoordinatorEntity[LKSystemCoordinator], SensorEntity
         self._coordinator = coordinator
         self._device_model = CUBIC_SECURE_MODEL
         self._device_name = (
-            f'Cubic Secure {coordinator.data["cubic_machine_info"]["zone"]["zoneName"]}'
+            f"Cubic Secure {coordinator.data['cubic_machine_info']['zone']['zoneName']}"
         )
         self._id = coordinator.data["cubic_machine_info"]["identity"]
         self.entity_description = description
         self.native_unit_of_measurement = description.native_unit_of_measurement
-        self._attr_unique_id = f'LkUid_{description.key}_{coordinator.data["cubic_machine_info"]["identity"]}'
+        self._attr_unique_id = f"LkUid_{description.key}_{coordinator.data['cubic_machine_info']['identity']}"
         self._attr_extra_state_attributes = {}
 
     @property
@@ -311,7 +322,7 @@ class LKCubicSensor(AbstractLkCubicSensor):
         super().__init__(coordinator=coordinator, description=description)
         self._data_source = data_source
         self._data_key = description.key
-        self._attr_unique_id = f'LkUid_{description.key}_{coordinator.data["cubic_machine_info"]["identity"]}'
+        self._attr_unique_id = f"LkUid_{description.key}_{coordinator.data['cubic_machine_info']['identity']}"
         # self.native_unit_of_measurement = description.native_unit_of_measurement
         self._attr_extra_state_attributes = {}
 

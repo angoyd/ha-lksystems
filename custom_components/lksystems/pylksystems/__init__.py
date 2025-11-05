@@ -75,6 +75,10 @@ class LKSystemsManager:
 
         return {
             "content-type": "application/json",
+            "api-version": "1",
+            "Accept": "application/json, application/xml, text/plain, text/html, *.*",
+            "User-Agent": "MyLk",
+            "ocp-apim-subscription-key": "d2d308826cd14e7d92660b28bc7d859c",
         }
 
     async def _get(self, endpoint):
