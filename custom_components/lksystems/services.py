@@ -14,8 +14,8 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-
 async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
+
     @callback
     async def pause_leak_detection(call: ServiceCall) -> None:
         """Handle the service action call."""
@@ -62,6 +62,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 await lk_inst.cubic_secure_close_valve(sn)
         except Exception as e:
             _LOGGER.error("Error closing valve: %s", e)
+
 
     @callback
     async def open_valve(call: ServiceCall) -> None:
@@ -121,19 +122,13 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         pressure_sensitivity = call.data.get("pressure_sensitivity", 0.3)
         pressure_test_duration = call.data.get("pressure_test_duration", 45)
         pressure_close_delay = call.data.get("pressure_close_delay", 255600)
-        pressure_notification_delay = call.data.get(
-            "pressure_notification_delay", 169200
-        )
+        pressure_notification_delay = call.data.get("pressure_notification_delay", 169200)
         medium_leak_threshold = call.data.get("medium_leak_threshold", 5.0)
         medium_leak_close_delay = call.data.get("medium_leak_close_delay", 2700)
-        medium_leak_notification_delay = call.data.get(
-            "medium_leak_notification_delay", 2700
-        )
+        medium_leak_notification_delay = call.data.get("medium_leak_notification_delay", 2700)
         large_leak_threshold = call.data.get("large_leak_threshold", 1500.0)
         large_leak_close_delay = call.data.get("large_leak_close_delay", 90)
-        large_leak_notification_delay = call.data.get(
-            "large_leak_notification_delay", 90
-        )
+        large_leak_notification_delay = call.data.get("large_leak_notification_delay", 90)
         thresholds = LKThresholds(
             pressure=LKPressureThresholds(
                 sensitivity=pressure_sensitivity,
@@ -150,7 +145,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 "threshold": large_leak_threshold,
                 "closeDelay": large_leak_close_delay,
                 "notificationDelay": large_leak_notification_delay,
-            },
+            }
         )
         _LOGGER.info(f"Setting thresholds {sn} to {thresholds}")
         if not sn:
@@ -172,7 +167,5 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
     hass.services.async_register(DOMAIN, "pause_leak_detection", pause_leak_detection)
     hass.services.async_register(DOMAIN, "close_valve", close_valve)
     hass.services.async_register(DOMAIN, "open_valve", open_valve)
-    hass.services.async_register(
-        DOMAIN, "set_pressure_test_schedule", set_pressure_test_schedule
-    )
+    hass.services.async_register(DOMAIN, "set_pressure_test_schedule", set_pressure_test_schedule)
     hass.services.async_register(DOMAIN, "set_thresholds", set_thresholds)

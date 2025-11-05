@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .pylksystems import LKSystemsManager, LKThresholds, LKPressureThresholds
+from datetime import time, timedelta
+
 import logging
 from typing import TypedDict
 from datetime import timedelta
@@ -22,10 +25,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
-from homeassistant.helpers.update_coordinator import (
-    DataUpdateCoordinator,
-    UpdateFailed,
-)
+
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 import voluptuous as vol
 from homeassistant.helpers import config_validation as cv
@@ -37,6 +41,7 @@ from .pylksystems import (
     LKThresholds,
     LKPressureThresholds,
 )
+from .services import async_setup_services
 
 from .services import async_setup_services
 
@@ -48,7 +53,6 @@ PLATFORMS = [Platform.SENSOR, Platform.CLIMATE]
 
 class LkStructureResp(TypedDict):
     """API response structure"""
-
     realestateId: str
     name: str
     city: str
@@ -63,6 +67,32 @@ class LkStructureResp(TypedDict):
     update_time: str
     next_update_time: str
 
+class LKCubicSecureConfigResp(TypedDict):
+    """Cubic secure configuration structure"""
+    firmwareVersion: str
+    hardwareVersion: int
+    timeZonePosix: str
+    pressureTestSchedule: LKPressureTestSchedule
+    valveState: str
+    thresholds: LKThresholds
+    links: list
+    paired: dict
+    muteLeak: int
+    cacheTimer: int
+    cacheUpdated: int
+
+class LKPressureTestSchedule(TypedDict):
+    """Pressure test schedule structure"""
+    hour: int
+    minute: int
+
+class LKLeakInfo(TypedDict):
+    """Leak info structure"""
+    leakState: str
+    meanFlow: float
+    dateStartedAt: int
+    dateUpdatedAt: int
+    acknowledged: bool
 
 class LKCubicSecureConfigResp(TypedDict):
     """Cubic secure configuration structure"""
@@ -99,7 +129,6 @@ class LKLeakInfo(TypedDict):
 
 class LkCubicSecureResp(TypedDict):
     """API response structure"""
-
     serialNumber: str
     connectionState: str
     rssi: int
@@ -138,46 +167,24 @@ class LkZoneInfo(TypedDict):
     cacheUpdated: int
 
 
-# Global token storage (persists between coordinator updates)
-TOKEN_STORAGE = {
-    # Structure: entry_id -> {"jwt": jwt_token, "refresh": refresh_token, "expiry": timestamp}
-}
+async def update_listener(hass: HomeAssistant, entry):
+    """Handle options update."""
+    _LOGGER.debug(entry.options)
+    if not hass:  # Not sure, to remove warning
+        await hass.config_entries.async_reload(entry.entry_id)
 
 
-def is_token_valid(token: str) -> bool:
-    """Check if JWT token is valid and not expired."""
-    if not token:
-        return False
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up LK Systems from a config entry."""
+    coordinator = LKSystemCoordinator(hass, entry)
+    await coordinator.async_config_entry_first_refresh()
 
-    try:
-        # JWT tokens have 3 parts separated by dots
-        parts = token.split(".")
-        if len(parts) != 3:
-            return False
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    entry.async_on_unload(entry.add_update_listener(update_listener))
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await async_setup_services(hass, entry)
+    return True
 
-        # The second part (payload) contains the expiration time
-        payload = parts[1]
-        # Add padding for base64 decoding
-        payload += "=" * ((4 - len(payload) % 4) % 4)
-        decoded = base64.b64decode(payload)
-        payload_data = json.loads(decoded)
-
-        # Check expiration
-        exp_time = payload_data.get("exp", 0)
-        current_time = dt_util.utcnow().timestamp()
-
-        # Token is valid if expiration is in the future (with 5 min margin)
-        is_valid = exp_time > current_time + 300
-        _LOGGER.debug(
-            "Token validity check: exp=%s, now=%s, valid=%s",
-            exp_time,
-            current_time,
-            is_valid,
-        )
-        return is_valid
-    except Exception as ex:
-        _LOGGER.warning("Error validating token: %s", ex)
-        return False
 
 
 # Type definitions for better type checking
@@ -442,259 +449,70 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                         ),
                         None,
                     ),
-                    "cubic_last_messurement": None,
-                    "devices": [],
-                    "device_details": {},  # Will store detailed information about each device
-                    "update_time": self._last_update_time.isoformat(),
-                    "next_update_time": (
-                        self._last_update_time + self.update_interval
-                    ).isoformat(),
+                    "cubic_last_measurement": None,
+                    "update_time": None,
+                    "next_update_time": None,
+                    "cubic_configuration": None,
                 }
 
-                # Extract devices from user structure
-                devices = []
-                device_identities = []
-                arc_sense_devices = []  # Track Arc sense devices for direct updates
+                if (
+                    resp["cubic_machine_info"]
+                    and resp["cubic_machine_info"]["identity"]
+                ):
+                    self._cubic_identity = resp["cubic_machine_info"]["identity"]
 
-                # Process all devices from structure
-                if "realestateMachines" in lk_inst.user_structure:
-                    for machine in lk_inst.user_structure["realestateMachines"]:
-                        # Skip if no identity
-                        if not machine.get("identity"):
-                            continue
-
-                        device_identity = machine.get("identity")
-                        device_identities.append(device_identity)
-
-                        device_data = {
-                            "deviceTitle": machine,
-                            "mac": machine.get("identity"),
-                            "cacheUpdated": lk_inst.user_structure.get(
-                                "cacheUpdated", 0
-                            ),
-                        }
-                        devices.append(device_data)
-
-                        # Track Arc sense devices for direct measurements
-                        if (
-                            machine.get("deviceGroup") == "arc"
-                            and machine.get("deviceType") == "arc-sense"
-                        ):
-                            arc_sense_devices.append(device_identity)
-
-                        # Step 3: Get detailed information for each device
-                        if machine.get("deviceGroup") == "arc":
-                            if machine.get("deviceType") == "arc-sense":
-                                # Fetch measurement data - always force update to get latest values
-                                if await lk_inst.get_device_measurement(
-                                    device_identity, force_update=True
-                                ):
-                                    resp["device_details"][device_identity] = {
-                                        "measurement": lk_inst.device_measurements.get(
-                                            device_identity
-                                        )
-                                    }
-                                    # Also add to the device in the devices list
-                                    device_data["measurement"] = (
-                                        lk_inst.device_measurements.get(device_identity)
-                                    )
-
-                                # Fetch configuration data
-                                if await lk_inst.get_device_configuration(
-                                    device_identity
-                                ):
-                                    if device_identity not in resp["device_details"]:
-                                        resp["device_details"][device_identity] = {}
-                                    resp["device_details"][device_identity][
-                                        "configuration"
-                                    ] = lk_inst.device_configurations.get(
-                                        device_identity
-                                    )
-                                    # Also add to the device in the devices list
-                                    device_data["configuration"] = (
-                                        lk_inst.device_configurations.get(
-                                            device_identity
-                                        )
-                                    )
-
-                            elif machine.get("deviceType") == "arc-hub":
-                                # Fetch hub data if available
-                                hub_id = device_identity
-                                if await lk_inst.get_hub_devices(hub_id):
-                                    if "hub_data" not in resp:
-                                        resp["hub_data"] = {}
-                                    resp["hub_data"][hub_id] = lk_inst.hub_devices
-
-                                    # Process devices from this hub
-                                    if (
-                                        isinstance(lk_inst.hub_devices, dict)
-                                        and "devices" in lk_inst.hub_devices
-                                    ):
-                                        for hub_device in lk_inst.hub_devices[
-                                            "devices"
-                                        ]:
-                                            if (
-                                                hub_device.get("mac")
-                                                and hub_device.get("mac")
-                                                not in device_identities
-                                            ):
-                                                device_identities.append(
-                                                    hub_device.get("mac")
-                                                )
-                                                devices.append(hub_device)
-
-                                                # Also fetch detailed data for hub devices
-                                                device_mac = hub_device.get("mac")
-                                                if device_mac:
-                                                    # Measurement data should already be in the hub devices
-                                                    if "measurement" in hub_device:
-                                                        if (
-                                                            device_mac
-                                                            not in resp[
-                                                                "device_details"
-                                                            ]
-                                                        ):
-                                                            resp["device_details"][
-                                                                device_mac
-                                                            ] = {}
-                                                        resp["device_details"][
-                                                            device_mac
-                                                        ]["measurement"] = hub_device[
-                                                            "measurement"
-                                                        ]
-
-                        # For cubic devices (if they exist)
-                        elif (
-                            machine.get("deviceType") == "cubicsecure"
-                            and machine.get("deviceRole") == "cubicsecure"
-                        ):
-                            resp["cubic_machine_info"] = machine
-                            self._cubic_identity = device_identity
-
-                            # Try to get cubic measurements but don't fail if not available
-                            try:
-                                if await lk_inst.get_cubic_secure_measurement(
-                                    device_identity
-                                ):
-                                    resp["cubic_last_messurement"] = (
-                                        lk_inst.cubic_secure_messurement
-                                    )
-
-                                if lk_inst.cubic_secure_messurement is not None:
-                                    # Get time as unix timestamp
-                                    timestamp = int(time.time())
-                                    if (
-                                        timestamp
-                                        - lk_inst.cubic_secure_messurement[
-                                            "cacheUpdated"
-                                        ]
-                                        > 3600
-                                    ):
-                                        _LOGGER.debug(
-                                            "Cubic secure measurement is older than 1 hour, force update"
-                                        )
-                                        if not await lk_inst.get_cubic_secure_measurement(
-                                            self._cubic_identity, force_update=True
-                                        ):
-                                            _LOGGER.error(
-                                                "Failed to get cubic secure measurement, abort update"
-                                            )
-                                            raise UpdateFailed(
-                                                "Unknown error get_cubic_secure_measurement"
-                                            )
-
-                                resp["cubic_last_measurement"] = (
-                                    lk_inst.cubic_secure_messurement
-                                )
-                                if not await lk_inst.get_cubic_secure_configuration(
-                                    self._cubic_identity
-                                ):
-                                    _LOGGER.error(
-                                        "Failed to get cubic secure configuration, abort update"
-                                    )
-                                    raise UpdateFailed(
-                                        "Unknown error get_cubic_secure_measurement"
-                                    )
-                                if lk_inst.cubic_secure_configuration is not None:
-                                    # Get time as unix timestamp
-                                    timestamp = int(time.time())
-                                    if (
-                                        timestamp
-                                        - lk_inst.cubic_secure_configuration[
-                                            "cacheUpdated"
-                                        ]
-                                        > 3600
-                                    ):
-                                        _LOGGER.debug(
-                                            "Cubic secure configuration is older than 1 hour, force update"
-                                        )
-                                        if not await lk_inst.get_cubic_secure_configuration(
-                                            self._cubic_identity, force_update=True
-                                        ):
-                                            _LOGGER.error(
-                                                "Failed to get cubic secure configuration, abort update"
-                                            )
-                                            raise UpdateFailed(
-                                                "Unknown error get_cubic_secure_configuration"
-                                            )
-
-                                resp["cubic_configuration"] = (
-                                    lk_inst.cubic_secure_configuration
-                                )
-                            except Exception as err:
-                                _LOGGER.warning(
-                                    "Error fetching cubic measurements: %s", str(err)
-                                )
-
-                # Now directly fetch fresh measurement data for each Arc sense device
-                _LOGGER.info(
-                    "Fetching direct measurements for %d Arc sense devices",
-                    len(arc_sense_devices),
-                )
-                for device_id in arc_sense_devices:
-                    _LOGGER.debug(
-                        "Fetching fresh measurement data for Arc device: %s", device_id
+                if not await lk_inst.get_cubic_secure_measurement(self._cubic_identity):
+                    _LOGGER.error(
+                        "Failed to get cubic secure measurement, abort update"
                     )
-
-                    # Always get the latest data with force_update=True
-                    if await lk_inst.get_device_measurement(
-                        device_id, force_update=True
+                    raise UpdateFailed("Unknown error get_cubic_secure_measurement")
+                if lk_inst.cubic_secure_measurement is not None:
+                    # Get time as unix timestamp
+                    timestamp = int(time.time())
+                    if (
+                        timestamp - lk_inst.cubic_secure_measurement["cacheUpdated"]
+                        > 3600
                     ):
-                        measurement_data = lk_inst.device_measurements.get(device_id)
-
-                        if measurement_data:
-                            # Store in device_details for easy access by sensors
-                            if device_id not in resp["device_details"]:
-                                resp["device_details"][device_id] = {}
-
-                            resp["device_details"][device_id]["measurement"] = (
-                                measurement_data
-                            )
-
-                            # Log the fetched values
-                            _LOGGER.debug(
-                                "Got measurement for %s: Temp=%.1f°C, Humidity=%.1f%%, Battery=%s%%, RSSI=%sdBm",
-                                device_id,
-                                float(measurement_data.get("currentTemperature", 0))
-                                / 10,
-                                float(measurement_data.get("currentHumidity", 0)) / 10,
-                                measurement_data.get("currentBattery", 0),
-                                measurement_data.get("currentRssi", 0),
-                            )
-
-                            # Also update the device in the devices list
-                            for device in devices:
-                                device_title = device.get("deviceTitle", {})
-                                if (
-                                    device.get("mac") == device_id
-                                    or device_title.get("identity") == device_id
-                                ):
-                                    device["measurement"] = measurement_data.copy()
-                                    break
-                    else:
-                        _LOGGER.warning(
-                            "Failed to get measurement data for device %s", device_id
+                        _LOGGER.debug(
+                            "Cubic secure measurement is older than 1 hour, force update"
                         )
+                        if not await lk_inst.get_cubic_secure_measurement(
+                            self._cubic_identity, force_update=True
+                        ):
+                            _LOGGER.error(
+                                "Failed to get cubic secure measurement, abort update"
+                            )
+                            raise UpdateFailed(
+                                "Unknown error get_cubic_secure_measurement"
+                            )
+
+                resp["cubic_last_measurement"] = lk_inst.cubic_secure_measurement
+                if not await lk_inst.get_cubic_secure_configuration(self._cubic_identity):
+                    _LOGGER.error(
+                        "Failed to get cubic secure configuration, abort update"
+                    )
+                    raise UpdateFailed("Unknown error get_cubic_secure_measurement")
+                if lk_inst.cubic_secure_configuration is not None:
+                    # Get time as unix timestamp
+                    timestamp = int(time.time())
+                    if (
+                        timestamp - lk_inst.cubic_secure_configuration["cacheUpdated"]
+                        > 3600
+                    ):
+                        _LOGGER.debug(
+                            "Cubic secure configuration is older than 1 hour, force update"
+                        )
+                        if not await lk_inst.get_cubic_secure_configuration(
+                            self._cubic_identity, force_update=True
+                        ):
+                            _LOGGER.error(
+                                "Failed to get cubic secure configuration, abort update"
+                            )
+                            raise UpdateFailed(
+                                "Unknown error get_cubic_secure_configuration"
+                            )
+
+                resp["cubic_configuration"] = lk_inst.cubic_secure_configuration
 
                 # Also get measurements for devices listed in hub data if not already fetched
                 if "hub_data" in resp:

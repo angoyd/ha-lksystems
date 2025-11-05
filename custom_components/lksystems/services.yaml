@@ -1,18 +1,3 @@
-update_all_devices:
-  name: Update All Devices
-  description: "Force update of all LK Systems Arc sense devices with fresh measurements"
-
-refresh_device:
-  name: Refresh Device
-  description: "Refresh data for a specific LK Systems device or all devices"
-  fields:
-    device_id:
-      name: Device ID
-      description: "The device ID (MAC address) to refresh. Leave empty to refresh all devices."
-      example: "aa:bb:cc:dd:ee:ff"
-      required: false
-      selector:
-        text:
 pause_leak_detection:
   name: Pause leak detection
   description: Will pause leak detection for the given time period
