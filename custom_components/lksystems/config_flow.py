@@ -153,7 +153,8 @@ class OptionsFlowHandler(OptionsFlow):
     
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow with config entry."""
-        self.config_entry = config_entry
+        self._config_entry = config_entry
+        super().__init__()
 
     async def async_step_init(self, user_input=None):
         """Manage the options."""
@@ -161,7 +162,7 @@ class OptionsFlowHandler(OptionsFlow):
             return self.async_create_entry(title="", data=user_input)
 
         # Get current options or provide defaults
-        options = self.config_entry.options or {}
+        options = self._config_entry.options or {}
         update_interval = options.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
         
         return self.async_show_form(

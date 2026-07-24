@@ -588,10 +588,10 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                                         - lk_inst.cubic_secure_messurement[
                                             "cacheUpdated"
                                         ]
-                                        > 3600
+                                        > self.update_interval.total_seconds()
                                     ):
                                         _LOGGER.debug(
-                                            "Cubic secure measurement is older than 1 hour, force update"
+                                            "Cubic secure measurement is older than update interval, force update"
                                         )
                                         if not await lk_inst.get_cubic_secure_measurement(
                                             self._cubic_identity, force_update=True
@@ -623,10 +623,10 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                                         - lk_inst.cubic_secure_configuration[
                                             "cacheUpdated"
                                         ]
-                                        > 3600
+                                        > self.update_interval.total_seconds()
                                     ):
                                         _LOGGER.debug(
-                                            "Cubic secure configuration is older than 1 hour, force update"
+                                            "Cubic secure configuration is older than update interval, force update"
                                         )
                                         if not await lk_inst.get_cubic_secure_configuration(
                                             self._cubic_identity, force_update=True

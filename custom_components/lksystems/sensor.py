@@ -918,32 +918,37 @@ class LKCubicSensor(AbstractLkCubicSensor):
         super()._handle_coordinator_update()
 
     @property
-    def native_value(self) -> str | None:
+    def native_value(self) -> Any | None:
         """Get the latest state value."""
+        value = None
+
         if self._data_source == "configuration":
             if self._data_key in self._coordinator.data["cubic_configuration"]:
-                return self._coordinator.data["cubic_configuration"][self._data_key]
+                value = self._coordinator.data["cubic_configuration"][self._data_key]
             elif "." in self._data_key:
                 keys = self._data_key.split(".")
                 value = self._coordinator.data["cubic_configuration"]
                 for key in keys:
                     value = value.get(key, None)
                     if value is None:
-                        return None
-                return value
-            return None
+                        break
         elif self._data_source == "measurement":
             _LOGGER.debug("Getting measurement for key: %s", self._data_key)
             _LOGGER.debug(self._coordinator.data["cubic_last_measurement"])
             if self._data_key in self._coordinator.data["cubic_last_measurement"]:
-                return self._coordinator.data["cubic_last_measurement"][self._data_key]
+                value = self._coordinator.data["cubic_last_measurement"][self._data_key]
             elif "." in self._data_key:
                 keys = self._data_key.split(".")
                 value = self._coordinator.data["cubic_last_measurement"]
                 for key in keys:
                     value = value.get(key, None)
                     if value is None:
-                        return None
-                return value
+                        break
 
-        return None
+        if value is not None and self.device_class == SensorDeviceClass.TIMESTAMP:
+            try:
+                return dt_util.utc_from_timestamp(float(value))
+            except (ValueError, TypeError):
+                pass
+        
+        return value
