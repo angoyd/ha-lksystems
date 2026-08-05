@@ -37,3 +37,27 @@ The integration supports:
 ## Enable the integration
 Go to Settings / Devices & Services / Integrations. Click **+ ADD INTEGRATION**
 Follow the instructions
+
+# Contributing
+Contributions are welcome, whether that's a bug fix, a new sensor/entity, or tests for existing code.
+
+### Setting up a dev environment
+1. Fork the repo and clone your fork.
+2. Install the test dependencies: `pip install -r requirements_test.txt`
+
+### Running the tests
+
+```bash
+pytest
+```
+
+The test suite covers `custom_components/lksystems/pylksystems` (the LK Systems API client) and mocks all HTTP calls with [aioresponses](https://github.com/pnuckowski/aioresponses), so it runs without a real LK Systems account and without Home Assistant installed.
+
+Note: `sensor.py`, `climate.py`, and `config_flow.py` aren't covered yet — testing those needs Home Assistant's own test harness (`pytest-homeassistant-custom-component`), which hasn't been wired up. Contributions adding that setup are very welcome.
+
+### Submitting a change
+1. Create a branch off `main` in your fork.
+2. If you're changing behavior in `pylksystems`, please add or update a test alongside the change — see `tests/test_pylksystems.py` for the existing pattern.
+3. Open a pull request against `main` describing what changed and why.
+
+CI runs the test suite automatically on every pull request.
