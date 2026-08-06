@@ -15,6 +15,20 @@ from dateutil.relativedelta import relativedelta
 
 _LOGGER = logging.getLogger(__name__)
 
+# Header names (case-insensitive) whose values must never be logged verbatim.
+_SENSITIVE_HEADERS = {"authorization", "ocp-apim-subscription-key"}
+_REDACTED = "***REDACTED***"
+
+
+def _redact_headers(headers: dict) -> dict:
+    """Return a copy of headers with sensitive values replaced for logging."""
+    if not headers:
+        return headers
+    return {
+        key: _REDACTED if key.lower() in _SENSITIVE_HEADERS else value
+        for key, value in headers.items()
+    }
+
 
 # Add the missing LKSystemsError class
 class LKSystemsError(Exception):
@@ -93,7 +107,7 @@ class LKSystemsManager:
         _LOGGER.error(
             "An error occurred during the request. URL: %s, Headers: %s. Error: %s",
             self.base_url + endpoint,
-            headers,
+            _redact_headers(headers),
             error,
         )
         return False
@@ -830,8 +844,8 @@ class LKSystemsManager:
             }
 
             _LOGGER.debug(
-                "Using Azure endpoint for thermostat control with token: %s...",
-                self.jwt_token[:20] if self.jwt_token else "None",
+                "Using Azure endpoint for thermostat control, token present: %s",
+                self.jwt_token is not None,
             )
 
             # Create simple payload according to the required format

@@ -7,6 +7,8 @@ merge/dedupe, error handling) without ever hitting the real LK Systems API.
 
 from __future__ import annotations
 
+import logging
+
 from aiohttp import ClientConnectionError
 from aioresponses import aioresponses
 
@@ -261,3 +263,41 @@ class TestSetDeviceTemperature:
 
         assert result is False
         assert "AA:BB:CC" not in manager.device_measurements
+
+
+class TestSensitiveDataNotLogged:
+    """Regression tests: request failures and debug logs must never leak
+    the bearer token, the API subscription key, or any part of a JWT.
+    """
+
+    async def test_handle_client_error_redacts_headers(self, manager, caplog):
+        headers = {
+            "content-type": "application/json",
+            "authorization": "Bearer super-secret-jwt",
+            "ocp-apim-subscription-key": "super-secret-key",
+        }
+
+        await manager.handle_client_error("some/endpoint", headers, ValueError("boom"))
+
+        log_text = caplog.text
+        assert "super-secret-jwt" not in log_text
+        assert "super-secret-key" not in log_text
+        # Non-sensitive headers are still useful for debugging.
+        assert "application/json" in log_text
+
+    async def test_set_thermostat_temperature_logs_token_presence_not_value(
+        self, manager, caplog
+    ):
+        manager.jwt_token = "super-secret-jwt"
+        caplog.set_level(logging.DEBUG)
+
+        with aioresponses() as m:
+            m.post(
+                "https://lk-arc-structure-mapper.azurewebsites.net/api/measurement/sense",
+                payload={"currentTemperature": 210},
+                status=200,
+            )
+            async with manager:
+                await manager.set_thermostat_temperature("AA:BB:CC", 215)
+
+        assert "super-secret-jwt" not in caplog.text
