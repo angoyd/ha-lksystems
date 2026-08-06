@@ -10,10 +10,15 @@ import re
 from typing import TypedDict
 
 
-from aiohttp import ClientError, ClientResponseError, ClientSession
+from aiohttp import ClientError, ClientResponseError, ClientSession, ClientTimeout
 from dateutil.relativedelta import relativedelta
 
 _LOGGER = logging.getLogger(__name__)
+
+# aiohttp defaults to a 300s total timeout when none is set. That lets one
+# slow/unresponsive LK API call stall an entire coordinator update for up to
+# 5 minutes before it even fails - fail fast instead.
+REQUEST_TIMEOUT = ClientTimeout(total=20)
 
 
 # Add the missing LKSystemsError class
@@ -81,7 +86,7 @@ class LKSystemsManager:
 
     async def __aenter__(self):
         """Asynchronous enter."""
-        self.session = ClientSession()
+        self.session = ClientSession(timeout=REQUEST_TIMEOUT)
         return self
 
     async def __aexit__(self, exc_type, exc_value, traceback):
