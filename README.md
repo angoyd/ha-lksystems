@@ -83,8 +83,8 @@ If your test instance has the built-in [**Model Context Protocol Server**](https
 To set it up:
 
 1. In HA, add the **Model Context Protocol Server** integration and create a long-lived access token for it (**Settings → People → your profile → Security → Long-lived access tokens**).
-2. Install [`mcp-proxy`](https://github.com/sparfenyuk/mcp-proxy) locally, which bridges your editor/tool's MCP client to HA's HTTP-based MCP endpoint (`https://<host>:8123/api/mcp`).
-3. Point your tool's MCP config at it, e.g. for Claude Code, a project-local `.mcp.json`:
+2. Install [`mcp-proxy`](https://github.com/sparfenyuk/mcp-proxy) locally (e.g. `pip install --user mcp-proxy`), which bridges your editor/tool's MCP client to HA's HTTP-based MCP endpoint (`https://<host>:8123/api/mcp`). At time of writing, `mcp-proxy` needs `mcp<2` (`pip install --user "mcp==1.29.0"`) — the just-released `mcp` 2.0.0 changed internals in a way `mcp-proxy` 0.12.0 doesn't support yet.
+3. Point your tool's MCP config at it, e.g. for Claude Code, a project-local `.mcp.json`. The token goes in as an `Authorization: Bearer` header via `-H`, not an environment variable:
 
    ```json
    {
@@ -94,15 +94,17 @@ To set it up:
          "args": [
            "--transport=streamablehttp",
            "--stateless",
+           "-H",
+           "Authorization",
+           "Bearer <your-long-lived-token>",
            "https://<your-host>:8123/api/mcp"
-         ],
-         "env": { "API_ACCESS_TOKEN": "<your-long-lived-token>" }
+         ]
        }
      }
    }
    ```
 
-Keep this file out of version control (it's gitignored here) since it points at your personal instance and, depending on setup, may carry a token.
+Keep this file out of version control (it's gitignored here) since it points at your personal instance and carries a live token.
 
 ### Submitting a change
 
