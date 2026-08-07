@@ -37,6 +37,7 @@ from .pylksystems import (
     LKThresholds,
     LKPressureThresholds,
 )
+from .redact import mask_username
 
 from .services import async_setup_services
 
@@ -389,7 +390,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                 )
                 raise ConfigEntryAuthFailed("Missing username or password")
 
-            _LOGGER.debug("Using credentials for user: %s", username)
+            _LOGGER.debug("Using credentials for user: %s", mask_username(username))
 
             # Check if we have stored tokens for this entry
             stored_tokens = TOKEN_STORAGE.get(self._entry_id, {})
