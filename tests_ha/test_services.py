@@ -139,19 +139,36 @@ async def test_close_valve_login_failure_does_not_raise(hass, fake_manager):
     assert not any(c[0] == "cubic_secure_close_valve" for c in fake_manager.calls)
 
 
-async def test_close_valve_unknown_device_raises(hass, fake_manager):
-    """Documents current (buggy) behavior: device_entry.serial_number is
-    read before the handler's own try/except, so an unrecognized
-    device_id crashes with an AttributeError instead of being handled
-    gracefully. Not fixed here - see TODO.local.md.
+@pytest.mark.parametrize(
+    "service,extra_data,client_call",
+    [
+        ("close_valve", {}, "cubic_secure_close_valve"),
+        ("open_valve", {}, "cubic_secure_open_valve"),
+        ("pause_leak_detection", {"seconds": 1800}, "cubic_secure_pause_leak_detection"),
+        (
+            "set_pressure_test_schedule",
+            {"hour": 3, "minute": 30},
+            "cubic_secure_set_pressure_test_schedule",
+        ),
+        ("set_thresholds", {}, "cubic_secure_set_thresholds"),
+    ],
+)
+async def test_unknown_device_does_not_raise(
+    hass, fake_manager, service, extra_data, client_call
+):
+    """An unrecognized device_id used to crash with an AttributeError:
+    device_entry.serial_number was read before the handler's own
+    try/except. It should instead be handled the same way as a missing
+    serial number - log and return without calling the client.
     """
     await _setup_entry_and_get_cubic_device(hass, fake_manager)
 
     with _patch_services_manager(fake_manager):
-        with pytest.raises(Exception):
-            await hass.services.async_call(
-                DOMAIN,
-                "close_valve",
-                {"device_id": "not-a-real-device-id"},
-                blocking=True,
-            )
+        await hass.services.async_call(
+            DOMAIN,
+            service,
+            {"device_id": "not-a-real-device-id", **extra_data},
+            blocking=True,
+        )
+
+    assert not any(c[0] == client_call for c in fake_manager.calls)
