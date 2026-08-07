@@ -70,3 +70,8 @@ Note: `sensor.py`, `climate.py`, and `config_flow.py` aren't covered yet — tes
 3. Open a pull request against `main` describing what changed and why.
 
 CI runs the test suite automatically on every pull request.
+
+### API documentation
+
+The integration uses the API exposed by LK System. [API documentation](https://lk-home-assistant-prod.developer.azure-api.net/)
+
