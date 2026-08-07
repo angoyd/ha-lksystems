@@ -3,3 +3,7 @@
 __pycache__
 .venv-test/
 .pytest_cache/
+TODO.local.md
+.vscode/
+.claude/
+.mcp.json

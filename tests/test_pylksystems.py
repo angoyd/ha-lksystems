@@ -70,6 +70,58 @@ class TestLogin:
         assert result is False
 
 
+class TestGetUserStructure:
+    async def test_success_uses_first_element_of_list(self, manager):
+        manager.userid = "user-123"
+        api_response = [{"realestateId": "re-1", "cacheUpdated": 111}]
+
+        with aioresponses() as m:
+            m.get(
+                BASE_URL + "service/users/user/user-123/structure/1",
+                payload=api_response,
+                status=200,
+            )
+            async with manager:
+                result = await manager.get_user_structure()
+
+        assert result is True
+        assert manager.user_structure == {"realestateId": "re-1", "cacheUpdated": 111}
+
+    async def test_empty_list_response_does_not_raise(self, manager):
+        """Account with no devices/realestates: API returns `[]`.
+
+        Regression test for issue #30 - this used to raise
+        `IndexError: list index out of range`.
+        """
+        manager.userid = "user-123"
+
+        with aioresponses() as m:
+            m.get(
+                BASE_URL + "service/users/user/user-123/structure/1",
+                payload=[],
+                status=200,
+            )
+            async with manager:
+                result = await manager.get_user_structure()
+
+        assert result is False
+        assert manager.user_structure is None
+
+    async def test_request_failure_returns_false(self, manager):
+        manager.userid = "user-123"
+
+        with aioresponses() as m:
+            m.get(
+                BASE_URL + "service/users/user/user-123/structure/1",
+                status=500,
+            )
+            async with manager:
+                result = await manager.get_user_structure()
+
+        assert result is False
+        assert manager.user_structure is None
+
+
 class TestGetDevices:
     async def test_list_response_skips_cubic_and_extracts_arc_fields(self, manager):
         manager.userid = "user-123"
@@ -301,3 +353,16 @@ class TestSensitiveDataNotLogged:
                 await manager.set_thermostat_temperature("AA:BB:CC", 215)
 
         assert "super-secret-jwt" not in caplog.text
+class TestClientSessionTimeout:
+    async def test_session_has_a_bounded_timeout(self, manager):
+        """Regression test: aiohttp defaults to a 300s total timeout when
+        none is configured on the ClientSession. That lets one slow or
+        unresponsive LK API call stall an entire coordinator update cycle
+        for up to 5 minutes before it even fails. The session must set an
+        explicit, short timeout instead of relying on that default.
+        """
+        async with manager:
+            timeout = manager.session.timeout
+
+        assert timeout.total is not None
+        assert timeout.total <= 30

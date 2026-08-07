@@ -10,7 +10,7 @@ import re
 from typing import TypedDict
 
 
-from aiohttp import ClientError, ClientResponseError, ClientSession
+from aiohttp import ClientError, ClientResponseError, ClientSession, ClientTimeout
 from dateutil.relativedelta import relativedelta
 
 _LOGGER = logging.getLogger(__name__)
@@ -28,6 +28,10 @@ def _redact_headers(headers: dict) -> dict:
         key: _REDACTED if key.lower() in _SENSITIVE_HEADERS else value
         for key, value in headers.items()
     }
+# aiohttp defaults to a 300s total timeout when none is set. That lets one
+# slow/unresponsive LK API call stall an entire coordinator update for up to
+# 5 minutes before it even fails - fail fast instead.
+REQUEST_TIMEOUT = ClientTimeout(total=20)
 
 
 # Add the missing LKSystemsError class
@@ -95,7 +99,7 @@ class LKSystemsManager:
 
     async def __aenter__(self):
         """Asynchronous enter."""
-        self.session = ClientSession()
+        self.session = ClientSession(timeout=REQUEST_TIMEOUT)
         return self
 
     async def __aexit__(self, exc_type, exc_value, traceback):
@@ -254,6 +258,16 @@ class LKSystemsManager:
         endpoint = f"service/users/user/{self.userid}/structure/1"
         success, res = await self._get(endpoint)
         if success:
+            if not res:
+                # Accounts with no devices/realestates registered get back
+                # an empty list rather than a missing structure. Treat that
+                # as "no structure available" instead of crashing on res[0].
+                _LOGGER.warning(
+                    "User structure response was empty - account has no "
+                    "devices or realestates registered"
+                )
+                self._user_structure = None
+                return False
             self._user_structure = res[0]
             return True
         return False
