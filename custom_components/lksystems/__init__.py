@@ -190,9 +190,16 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize the coordinator."""
-        # Always convert to integer in case it comes as string from config
+        # Always convert to integer in case it comes as string from config.
+        # Options (set via the Configure dialog after initial setup) take
+        # precedence over data (set on the original setup form) - this
+        # mirrors async_update_options()'s lookup below, which is what
+        # actually detects changes and triggers a reload.
         update_interval_minutes = int(
-            entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+            entry.options.get(
+                CONF_UPDATE_INTERVAL,
+                entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
+            )
         )
 
         _LOGGER.warning(
