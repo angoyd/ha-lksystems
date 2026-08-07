@@ -63,6 +63,49 @@ The test suite covers `custom_components/lksystems/pylksystems` (the LK Systems 
 
 Note: `sensor.py`, `climate.py`, and `config_flow.py` aren't covered yet — testing those needs Home Assistant's own test harness (`pytest-homeassistant-custom-component`), which hasn't been wired up. Contributions adding that setup are very welcome.
 
+### Deploying to a test Home Assistant instance
+
+`deploy.sh` syncs your local `custom_components/lksystems/` straight into a running Home Assistant instance over SSH, for testing changes against a real account before opening a PR.
+
+```bash
+./deploy.sh <user> <host>
+# e.g. ./deploy.sh homeassistant homeassistant.local
+```
+
+Requirements on the target instance: SSH access (e.g. the [Terminal & SSH add-on](https://github.com/home-assistant/addons/tree/master/ssh) on HAOS) reachable with `ssh <user>@<host>`, and a `/config` directory. The script creates `/config/custom_components/lksystems/` if needed and `rsync`s the integration's files there.
+
+After syncing, reload the integration (**Settings → Devices & Services → LK Systems → ⋮ → Reload**), or restart HA on a first install.
+
+### Using the Home Assistant MCP server for live testing
+
+If your test instance has the built-in [**Model Context Protocol Server**](https://www.home-assistant.io/integrations/mcp_server/) integration enabled, an AI coding assistant (like Claude Code) can query live entity states and call services directly against it — useful for verifying a change actually behaves correctly in HA, not just that the unit tests pass.
+
+To set it up:
+
+1. In HA, add the **Model Context Protocol Server** integration and create a long-lived access token for it (**Settings → People → your profile → Security → Long-lived access tokens**).
+2. Install [`mcp-proxy`](https://github.com/sparfenyuk/mcp-proxy) locally (e.g. `pip install --user mcp-proxy`), which bridges your editor/tool's MCP client to HA's HTTP-based MCP endpoint (`https://<host>:8123/api/mcp`). At time of writing, `mcp-proxy` needs `mcp<2` (`pip install --user "mcp==1.29.0"`) — the just-released `mcp` 2.0.0 changed internals in a way `mcp-proxy` 0.12.0 doesn't support yet.
+3. Point your tool's MCP config at it, e.g. for Claude Code, a project-local `.mcp.json`. The token goes in as an `Authorization: Bearer` header via `-H`, not an environment variable:
+
+   ```json
+   {
+     "mcpServers": {
+       "Home Assistant": {
+         "command": "mcp-proxy",
+         "args": [
+           "--transport=streamablehttp",
+           "--stateless",
+           "-H",
+           "Authorization",
+           "Bearer <your-long-lived-token>",
+           "https://<your-host>:8123/api/mcp"
+         ]
+       }
+     }
+   }
+   ```
+
+Keep this file out of version control (it's gitignored here) since it points at your personal instance and carries a live token.
+
 ### Submitting a change
 
 1. Create a branch off `main` in your fork.
