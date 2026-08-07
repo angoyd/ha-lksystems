@@ -650,6 +650,18 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                                     lk_inst.cubic_secure_configuration
                                 )
                             except Exception as err:
+                                # Sensors index these keys directly, so they
+                                # must exist even on failure; reuse the last
+                                # known values if we have them.
+                                previous_data = self.data or {}
+                                resp.setdefault(
+                                    "cubic_last_measurement",
+                                    previous_data.get("cubic_last_measurement"),
+                                )
+                                resp.setdefault(
+                                    "cubic_configuration",
+                                    previous_data.get("cubic_configuration"),
+                                )
                                 _LOGGER.warning(
                                     "Error fetching cubic measurements: %s", str(err)
                                 )
@@ -854,10 +866,8 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
             new_update_interval,
         )
 
-        # Force immediate update after reload
-        hass.async_create_task(coordinator.async_refresh())
-
-    # Reload entry
+    # Reloading tears down and recreates the coordinator with the new
+    # interval and performs its own first refresh.
     await hass.config_entries.async_reload(entry.entry_id)
 
 

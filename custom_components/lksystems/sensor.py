@@ -933,23 +933,27 @@ class LKCubicSensor(AbstractLkCubicSensor):
         value = None
 
         if self._data_source == "configuration":
-            if self._data_key in self._coordinator.data["cubic_configuration"]:
-                value = self._coordinator.data["cubic_configuration"][self._data_key]
+            cubic_configuration = self._coordinator.data.get("cubic_configuration") or {}
+            if self._data_key in cubic_configuration:
+                value = cubic_configuration[self._data_key]
             elif "." in self._data_key:
                 keys = self._data_key.split(".")
-                value = self._coordinator.data["cubic_configuration"]
+                value = cubic_configuration
                 for key in keys:
                     value = value.get(key, None)
                     if value is None:
                         break
         elif self._data_source == "measurement":
+            cubic_last_measurement = (
+                self._coordinator.data.get("cubic_last_measurement") or {}
+            )
             _LOGGER.debug("Getting measurement for key: %s", self._data_key)
-            _LOGGER.debug(self._coordinator.data["cubic_last_measurement"])
-            if self._data_key in self._coordinator.data["cubic_last_measurement"]:
-                value = self._coordinator.data["cubic_last_measurement"][self._data_key]
+            _LOGGER.debug(cubic_last_measurement)
+            if self._data_key in cubic_last_measurement:
+                value = cubic_last_measurement[self._data_key]
             elif "." in self._data_key:
                 keys = self._data_key.split(".")
-                value = self._coordinator.data["cubic_last_measurement"]
+                value = cubic_last_measurement
                 for key in keys:
                     value = value.get(key, None)
                     if value is None:
