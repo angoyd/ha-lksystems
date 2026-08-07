@@ -313,3 +313,18 @@ class TestSetDeviceTemperature:
 
         assert result is False
         assert "AA:BB:CC" not in manager.device_measurements
+
+
+class TestClientSessionTimeout:
+    async def test_session_has_a_bounded_timeout(self, manager):
+        """Regression test: aiohttp defaults to a 300s total timeout when
+        none is configured on the ClientSession. That lets one slow or
+        unresponsive LK API call stall an entire coordinator update cycle
+        for up to 5 minutes before it even fails. The session must set an
+        explicit, short timeout instead of relying on that default.
+        """
+        async with manager:
+            timeout = manager.session.timeout
+
+        assert timeout.total is not None
+        assert timeout.total <= 30
