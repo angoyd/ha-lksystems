@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from homeassistant.config_entries import SOURCE_REAUTH
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -92,3 +93,84 @@ async def test_options_flow_updates_interval(hass):
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == {CONF_UPDATE_INTERVAL: 30}
+
+
+async def test_reauth_shows_form(hass):
+    """Triggering reauth (as done in __init__.py on auth failure) shows
+    a pre-filled credentials form."""
+    entry = MockConfigEntry(domain=DOMAIN, data=USER_INPUT)
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+        data=entry.data,
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth"
+
+
+async def test_reauth_success_updates_entry_and_reloads(hass, fake_manager):
+    """Valid new credentials update the entry and reload it.
+
+    Both the config flow's own validate_input() call and the coordinator's
+    refresh (triggered by the reload that follows) go through
+    LKSystemsManager, so both import sites need patching.
+    """
+    entry = MockConfigEntry(domain=DOMAIN, data=USER_INPUT)
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+        data=entry.data,
+    )
+
+    new_creds = {
+        CONF_USERNAME: USER_INPUT[CONF_USERNAME],
+        CONF_PASSWORD: "new-password",
+    }
+    with (
+        patch(
+            "custom_components.lksystems.config_flow.LKSystemsManager",
+            return_value=fake_manager,
+        ),
+        patch(
+            "custom_components.lksystems.LKSystemsManager", return_value=fake_manager
+        ),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], new_creds
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_PASSWORD] == "new-password"
+
+
+async def test_reauth_invalid_auth_reshows_form_with_error(hass, fake_manager):
+    """A failed login during reauth re-shows the form with an error."""
+    entry = MockConfigEntry(domain=DOMAIN, data=USER_INPUT)
+    entry.add_to_hass(hass)
+    fake_manager.login_result = False
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+        data=entry.data,
+    )
+
+    with patch(
+        "custom_components.lksystems.config_flow.LKSystemsManager",
+        return_value=fake_manager,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_USERNAME: USER_INPUT[CONF_USERNAME], CONF_PASSWORD: "wrong"},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth"
+    assert result["errors"] == {"base": "invalid_auth"}
