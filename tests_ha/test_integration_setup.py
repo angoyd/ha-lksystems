@@ -13,6 +13,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -20,6 +21,7 @@ from custom_components.lksystems.const import DOMAIN
 
 from .conftest import (
     CUBIC_IDENTITY,
+    CUBIC_IDENTITY_2,
     HUB_CHILD_MAC,
     HUB_IDENTITY,
     SENSOR_MAC,
@@ -119,6 +121,39 @@ async def test_cubic_sensors_survive_a_configuration_fetch_failure(
 
     valve_id = _entity_id(hass, "sensor", f"LkUid_valveState_{CUBIC_IDENTITY}")
     assert hass.states.get(valve_id) is not None
+
+
+async def test_two_cubic_secure_devices_get_independent_entities(
+    hass, fake_manager_with_two_cubic_devices
+):
+    """Regression test for issue #29: two Cubic Secure devices registered
+    under the same property used to collapse into one, because both
+    the coordinator and the sensor entities kept a single unkeyed slot
+    instead of one per device identity - the second device's entities got
+    the first device's data (or a duplicate unique_id HA silently dropped),
+    while the first device's own entities went stale.
+    """
+    await _setup_entry(hass, fake_manager_with_two_cubic_devices)
+
+    volume_id_1 = _entity_id(hass, "sensor", f"LkUid_volumeTotal_{CUBIC_IDENTITY}")
+    valve_id_1 = _entity_id(hass, "sensor", f"LkUid_valveState_{CUBIC_IDENTITY}")
+    volume_id_2 = _entity_id(hass, "sensor", f"LkUid_volumeTotal_{CUBIC_IDENTITY_2}")
+    valve_id_2 = _entity_id(hass, "sensor", f"LkUid_valveState_{CUBIC_IDENTITY_2}")
+
+    assert hass.states.get(volume_id_1).state == "45000"
+    assert hass.states.get(valve_id_1).state == "open"
+    assert hass.states.get(volume_id_2).state == "99000"
+    assert hass.states.get(valve_id_2).state == "closed"
+
+    device_registry = dr.async_get(hass)
+    device_1 = device_registry.async_get_device(identifiers={(DOMAIN, CUBIC_IDENTITY)})
+    device_2 = device_registry.async_get_device(
+        identifiers={(DOMAIN, CUBIC_IDENTITY_2)}
+    )
+    assert device_1 is not None
+    assert device_2 is not None
+    assert device_1.id != device_2.id
+    assert device_2.name == "Cubic Secure Garage"
 
 
 async def test_set_temperature_service_calls_coordinator(hass, fake_manager):

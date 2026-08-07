@@ -33,6 +33,7 @@ from custom_components.lksystems.const import (
 
 from .conftest import (
     CUBIC_IDENTITY,
+    CUBIC_IDENTITY_2,
     HUB_CHILD_MAC,
     HUB_IDENTITY,
     SENSOR_MAC,
@@ -146,9 +147,10 @@ class TestAsyncUpdateData:
         assert data["realestateId"] == "realestate-1"
 
         # Cubic Secure device
-        assert data["cubic_machine_info"]["identity"] == CUBIC_IDENTITY
-        assert data["cubic_last_measurement"]["volumeTotal"] == 45000
-        assert data["cubic_configuration"]["valveState"] == "open"
+        cubic_device = data["cubic_devices"][CUBIC_IDENTITY]
+        assert cubic_device["machine_info"]["identity"] == CUBIC_IDENTITY
+        assert cubic_device["last_measurement"]["volumeTotal"] == 45000
+        assert cubic_device["configuration"]["valveState"] == "open"
 
         # Standalone Arc devices (thermostat + plain sensor)
         macs = {d.get("mac") for d in data["devices"]}
@@ -216,9 +218,10 @@ class TestCubicFetchFailureFallback:
         with _patch_manager(fake_manager):
             data = await coordinator._async_update_data()
 
-        assert "cubic_last_measurement" in data
-        assert "cubic_configuration" in data
-        assert data["cubic_configuration"] is None
+        cubic_device = data["cubic_devices"][CUBIC_IDENTITY]
+        assert "last_measurement" in cubic_device
+        assert "configuration" in cubic_device
+        assert cubic_device["configuration"] is None
 
     async def test_configuration_fetch_failure_falls_back_to_previous_data(
         self, hass, fake_manager
@@ -236,7 +239,56 @@ class TestCubicFetchFailureFallback:
         with _patch_manager(fake_manager):
             data = await coordinator._async_update_data()
 
-        assert data["cubic_configuration"] == good_data["cubic_configuration"]
+        assert (
+            data["cubic_devices"][CUBIC_IDENTITY]["configuration"]
+            == good_data["cubic_devices"][CUBIC_IDENTITY]["configuration"]
+        )
+
+
+class TestMultipleCubicSecureDevices:
+    """Regression coverage for issue #29: two Cubic Secure devices
+    registered under the same property used to stomp on each other, since
+    the coordinator kept a single unkeyed slot for machine_info/
+    last_measurement/configuration instead of one per device identity.
+    """
+
+    async def test_both_devices_keep_their_own_machine_info(
+        self, hass, fake_manager_with_two_cubic_devices
+    ):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager_with_two_cubic_devices):
+            data = await coordinator._async_update_data()
+
+        assert set(data["cubic_devices"]) == {CUBIC_IDENTITY, CUBIC_IDENTITY_2}
+        assert (
+            data["cubic_devices"][CUBIC_IDENTITY]["machine_info"]["zone"]["zoneName"]
+            == "Utility Room"
+        )
+        assert (
+            data["cubic_devices"][CUBIC_IDENTITY_2]["machine_info"]["zone"][
+                "zoneName"
+            ]
+            == "Garage"
+        )
+
+    async def test_both_devices_keep_their_own_measurement_and_configuration(
+        self, hass, fake_manager_with_two_cubic_devices
+    ):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager_with_two_cubic_devices):
+            data = await coordinator._async_update_data()
+
+        first = data["cubic_devices"][CUBIC_IDENTITY]
+        second = data["cubic_devices"][CUBIC_IDENTITY_2]
+
+        assert first["last_measurement"]["volumeTotal"] == 45000
+        assert second["last_measurement"]["volumeTotal"] == 99000
+        assert first["configuration"]["valveState"] == "open"
+        assert second["configuration"]["valveState"] == "closed"
 
 
 class TestForceDeviceUpdate:
