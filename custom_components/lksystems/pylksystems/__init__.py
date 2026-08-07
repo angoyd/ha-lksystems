@@ -240,6 +240,16 @@ class LKSystemsManager:
         endpoint = f"service/users/user/{self.userid}/structure/1"
         success, res = await self._get(endpoint)
         if success:
+            if not res:
+                # Accounts with no devices/realestates registered get back
+                # an empty list rather than a missing structure. Treat that
+                # as "no structure available" instead of crashing on res[0].
+                _LOGGER.warning(
+                    "User structure response was empty - account has no "
+                    "devices or realestates registered"
+                )
+                self._user_structure = None
+                return False
             self._user_structure = res[0]
             return True
         return False
