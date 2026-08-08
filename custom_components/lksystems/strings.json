@@ -16,7 +16,7 @@
             "unknown": "[%key:common::config_flow::error::unknown%]"
         },
         "abort": {
-            "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
+            "already_configured": "This LK Systems account is already configured. One integration entry covers your whole account, including multiple Cubic Secure devices - you don't need to add it again to see additional devices."
         }
     }
 }
