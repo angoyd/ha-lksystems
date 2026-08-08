@@ -381,3 +381,47 @@ class TestSetThermostatTemperature:
             )
 
         assert result is False
+
+    async def test_logs_in_before_calling_the_api(self, hass, fake_manager):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            result = await coordinator.set_thermostat_temperature(
+                THERMOSTAT_MAC, 225
+            )
+
+        assert result is True
+        call_names = [call[0] for call in fake_manager.calls]
+        assert call_names.index("login") < call_names.index(
+            "set_thermostat_temperature"
+        )
+
+    async def test_login_failure_returns_false(self, hass, fake_manager):
+        fake_manager.login_result = False
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            result = await coordinator.set_thermostat_temperature(
+                THERMOSTAT_MAC, 225
+            )
+
+        assert result is False
+
+    async def test_reuses_stored_valid_token(self, hass, fake_manager):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+        TOKEN_STORAGE[entry.entry_id] = {
+            "jwt": _make_token(3600),
+            "refresh": "stored-refresh-token",
+            "expiry": dt_util.utcnow().timestamp() + 3600,
+        }
+
+        with _patch_manager(fake_manager):
+            result = await coordinator.set_thermostat_temperature(
+                THERMOSTAT_MAC, 225
+            )
+
+        assert result is True
+        assert ("login",) not in fake_manager.calls
