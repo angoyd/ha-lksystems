@@ -10,7 +10,7 @@ slugified entity_ids, so these don't depend on HA's naming/slugify rules.
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers import entity_registry as er
@@ -101,6 +101,24 @@ async def test_cubic_secure_sensors_reflect_client_data(hass, fake_manager):
 
     assert hass.states.get(volume_id).state == "45000"
     assert hass.states.get(valve_id).state == "open"
+
+
+async def test_cubic_sensors_survive_a_configuration_fetch_failure(
+    hass, fake_manager
+):
+    """A transient failure fetching the cubic configuration used to leave
+    "cubic_configuration" out of the coordinator's data entirely, and
+    sensor.py indexed it directly - crashing every cubic sensor with a
+    KeyError while Home Assistant was adding it.
+    """
+    fake_manager.get_cubic_secure_configuration = AsyncMock(
+        side_effect=RuntimeError("boom")
+    )
+
+    await _setup_entry(hass, fake_manager)
+
+    valve_id = _entity_id(hass, "sensor", f"LkUid_valveState_{CUBIC_IDENTITY}")
+    assert hass.states.get(valve_id) is not None
 
 
 async def test_set_temperature_service_calls_coordinator(hass, fake_manager):

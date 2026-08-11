@@ -196,6 +196,49 @@ class TestAsyncUpdateData:
         assert TOKEN_STORAGE[entry.entry_id]["jwt"] == "fake-jwt-token"
 
 
+class TestCubicFetchFailureFallback:
+    """A failure partway through fetching the cubic measurement/configuration
+    used to leave "cubic_last_measurement"/"cubic_configuration" out of the
+    returned data entirely, since the keys are only assigned after the calls
+    that can raise. sensor.py indexes both keys directly, so every cubic
+    sensor crashed with a KeyError while Home Assistant was adding it.
+    """
+
+    async def test_configuration_fetch_failure_still_yields_both_keys(
+        self, hass, fake_manager
+    ):
+        fake_manager.get_cubic_secure_configuration = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            data = await coordinator._async_update_data()
+
+        assert "cubic_last_measurement" in data
+        assert "cubic_configuration" in data
+        assert data["cubic_configuration"] is None
+
+    async def test_configuration_fetch_failure_falls_back_to_previous_data(
+        self, hass, fake_manager
+    ):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            good_data = await coordinator._async_update_data()
+        coordinator.async_set_updated_data(good_data)
+
+        fake_manager.get_cubic_secure_configuration = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
+        with _patch_manager(fake_manager):
+            data = await coordinator._async_update_data()
+
+        assert data["cubic_configuration"] == good_data["cubic_configuration"]
+
+
 class TestForceDeviceUpdate:
     async def test_success_updates_stored_data(self, hass, fake_manager):
         entry = _make_entry(hass)
