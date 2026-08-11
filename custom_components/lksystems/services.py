@@ -15,19 +15,30 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _get_serial_number(hass: HomeAssistant, device_id: str) -> str | None:
+    """Look up a device's serial number, logging and returning None if
+    device_id doesn't match a registered device or the device has none.
+    """
+    device_entry = dr.async_get(hass).async_get(device_id)
+    if device_entry is None:
+        _LOGGER.error("Unknown device_id: %s", device_id)
+        return None
+    if not device_entry.serial_number:
+        _LOGGER.error("No serial number found for device %s", device_id)
+        return None
+    return device_entry.serial_number
+
+
 async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
     @callback
     async def pause_leak_detection(call: ServiceCall) -> None:
         """Handle the service action call."""
         device_id = call.data.get("device_id")
         seconds = int(call.data.get("seconds", 3600))
-        device_reg = dr.async_get(hass)
-        device_entry = device_reg.async_get(device_id)
-        sn = device_entry.serial_number
-        _LOGGER.info(f"Closing valve {sn}")
+        sn = _get_serial_number(hass, device_id)
         if not sn:
-            _LOGGER.error("No serial number found for device %s", device_id)
             return
+        _LOGGER.info(f"Closing valve {sn}")
         try:
             username = entry.data.get(CONF_USERNAME)
             password = entry.data.get(CONF_PASSWORD)
@@ -44,13 +55,10 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
     async def close_valve(call: ServiceCall) -> None:
         """Handle the service action call."""
         device_id = call.data.get("device_id")
-        device_reg = dr.async_get(hass)
-        device_entry = device_reg.async_get(device_id)
-        sn = device_entry.serial_number
-        _LOGGER.info(f"Closing valve {sn}")
+        sn = _get_serial_number(hass, device_id)
         if not sn:
-            _LOGGER.error("No serial number found for device %s", device_id)
             return
+        _LOGGER.info(f"Closing valve {sn}")
         try:
             username = entry.data.get(CONF_USERNAME)
             password = entry.data.get(CONF_PASSWORD)
@@ -67,13 +75,10 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
     async def open_valve(call: ServiceCall) -> None:
         """Handle the service action call."""
         device_id = call.data.get("device_id")
-        device_reg = dr.async_get(hass)
-        device_entry = device_reg.async_get(device_id)
-        sn = device_entry.serial_number
-        _LOGGER.info(f"Open valve {sn}")
+        sn = _get_serial_number(hass, device_id)
         if not sn:
-            _LOGGER.error("No serial number found for device %s", device_id)
             return
+        _LOGGER.info(f"Open valve {sn}")
         try:
             username = entry.data.get(CONF_USERNAME)
             password = entry.data.get(CONF_PASSWORD)
@@ -92,13 +97,10 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         device_id = call.data.get("device_id")
         hour = call.data.get("hour", 2)
         minute = call.data.get("minute", 0)
-        device_reg = dr.async_get(hass)
-        device_entry = device_reg.async_get(device_id)
-        sn = device_entry.serial_number
-        _LOGGER.info(f"Setting pressure test schedule {sn} to {hour}:{minute}")
+        sn = _get_serial_number(hass, device_id)
         if not sn:
-            _LOGGER.error("No serial number found for device %s", device_id)
             return
+        _LOGGER.info(f"Setting pressure test schedule {sn} to {hour}:{minute}")
         try:
             username = entry.data.get(CONF_USERNAME)
             password = entry.data.get(CONF_PASSWORD)
@@ -115,9 +117,9 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
     async def set_thresholds(call: ServiceCall) -> None:
         """Handle the service action call."""
         device_id = call.data.get("device_id")
-        device_reg = dr.async_get(hass)
-        device_entry = device_reg.async_get(device_id)
-        sn = device_entry.serial_number
+        sn = _get_serial_number(hass, device_id)
+        if not sn:
+            return
         pressure_sensitivity = call.data.get("pressure_sensitivity", 0.3)
         pressure_test_duration = call.data.get("pressure_test_duration", 45)
         pressure_close_delay = call.data.get("pressure_close_delay", 255600)
@@ -153,9 +155,6 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
             },
         )
         _LOGGER.info(f"Setting thresholds {sn} to {thresholds}")
-        if not sn:
-            _LOGGER.error("No serial number found for device %s", device_id)
-            return
         try:
             username = entry.data.get(CONF_USERNAME)
             password = entry.data.get(CONF_PASSWORD)

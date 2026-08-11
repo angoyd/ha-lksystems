@@ -55,13 +55,18 @@ Contributions are welcome, whether that's a bug fix, a new sensor/entity, or tes
 
 ### Running the tests
 
+There are two suites, run as separate `pytest` invocations (see below for why):
+
 ```bash
-pytest
+pytest tests/ -p no:homeassistant
+pytest tests_ha/
 ```
 
-The test suite covers `custom_components/lksystems/pylksystems` (the LK Systems API client) and mocks all HTTP calls with [aioresponses](https://github.com/pnuckowski/aioresponses), so it runs without a real LK Systems account and without Home Assistant installed.
+`tests/` covers `custom_components/lksystems/pylksystems` (the LK Systems API client) and mocks all HTTP calls with [aioresponses](https://github.com/pnuckowski/aioresponses) — no real LK Systems account needed.
 
-Note: `sensor.py`, `climate.py`, and `config_flow.py` aren't covered yet — testing those needs Home Assistant's own test harness (`pytest-homeassistant-custom-component`), which hasn't been wired up. Contributions adding that setup are very welcome.
+`tests_ha/` covers the pieces that import `homeassistant` directly (`__init__.py`, `climate.py`, `sensor.py`, `config_flow.py`, `services.py`) using Home Assistant's own test harness, [`pytest-homeassistant-custom-component`](https://github.com/MatthewFlamm/pytest-homeassistant-custom-component). Requires Python 3.12+.
+
+The `-p no:homeassistant` flag on the first command matters: once `pytest-homeassistant-custom-component` is installed, it registers a global autouse cleanup fixture that checks every test in the session for lingering threads/timers — including ones in `tests/` that never touch Home Assistant at all — and it trips on a background thread aiohttp itself leaves behind. Disabling the plugin for that invocation avoids the false positive; it's picked back up for `tests_ha/`.
 
 ### Deploying to a test Home Assistant instance
 
@@ -117,4 +122,3 @@ CI runs the test suite automatically on every pull request.
 ### API documentation
 
 The integration uses the API exposed by LK System. [API documentation](https://lk-home-assistant-prod.developer.azure-api.net/)
-

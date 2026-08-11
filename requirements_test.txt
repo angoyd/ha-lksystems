@@ -1,9 +1,16 @@
-pytest==8.3.3
+pytest==8.3.4
 pytest-asyncio==0.24.0
-# aiohttp is pinned (rather than following manifest.json's >=3.9.1) because
-# aioresponses mocks aiohttp's internals and breaks on newer aiohttp releases
-# that changed ClientResponse's constructor (e.g. the added `stream_writer`
-# kwarg). Bump together with aioresponses once upstream compatibility lands.
-aiohttp==3.9.1
+# Pinned to match pytest-homeassistant-custom-component 0.13.205's own pin
+# (which pulls in homeassistant==2025.1.4). Verified aioresponses 0.7.9 still
+# works correctly against this aiohttp release (see tests/test_pylksystems.py).
+aiohttp==3.11.11
 aioresponses==0.7.9
 python-dateutil>=2.8.2
+
+# Home Assistant test harness, used by tests_ha/ to exercise the pieces of
+# custom_components/lksystems that import `homeassistant` directly
+# (__init__.py, climate.py, sensor.py, config_flow.py, services.py) and so
+# can't use the tests/conftest.py importlib-bypass trick. Pinned to the
+# release that pins homeassistant==2025.1.4, close to the minimum HA version
+# declared in hacs.json (2025.1.1). Requires Python >=3.12.
+pytest-homeassistant-custom-component==0.13.205
