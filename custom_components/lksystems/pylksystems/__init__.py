@@ -75,12 +75,14 @@ class LKThresholds(TypedDict):
 class LKSystemsManager:
     """LKSystems manager."""
 
+    BASE_URL = "https://link2.lk.nu/"
+
     def __init__(self, username, password) -> None:
         """Initialize the LK systems manager."""
         if username is None or password is None:
             raise ValueError("Username and password must be provided.")
         self.session = None
-        self.base_url = "https://link2.lk.nu/"
+        self.base_url = self.BASE_URL
         self.username = username
         self.password = password
         self.userid = None
