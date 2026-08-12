@@ -266,9 +266,8 @@ def build_user_structure() -> dict:
 
 def build_user_structure_with_two_cubic_devices() -> dict:
     """Same as build_user_structure(), but with a second Cubic Secure
-    machine registered under the same property - reproducing the account
-    layout from issue #29 (two Cubic Secure devices, e.g. "Kitchen" and
-    "Garage", registered under one realestate).
+    machine registered under the same property - two Cubic Secure devices
+    (e.g. "Kitchen" and "Garage") registered under one realestate.
     """
     structure = build_user_structure()
     structure["realestateMachines"].append(
@@ -398,7 +397,7 @@ def fake_manager() -> FakeLKSystemsManager:
 @pytest.fixture
 def fake_manager_with_two_cubic_devices() -> FakeLKSystemsManager:
     """A FakeLKSystemsManager pre-populated with two Cubic Secure devices
-    registered under the same property (issue #29).
+    registered under the same property.
     """
     manager = FakeLKSystemsManager()
     configure_fake_manager_with_two_cubic_devices(manager)

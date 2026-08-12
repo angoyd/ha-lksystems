@@ -126,12 +126,12 @@ async def test_cubic_sensors_survive_a_configuration_fetch_failure(
 async def test_two_cubic_secure_devices_get_independent_entities(
     hass, fake_manager_with_two_cubic_devices
 ):
-    """Regression test for issue #29: two Cubic Secure devices registered
-    under the same property used to collapse into one, because both
-    the coordinator and the sensor entities kept a single unkeyed slot
-    instead of one per device identity - the second device's entities got
-    the first device's data (or a duplicate unique_id HA silently dropped),
-    while the first device's own entities went stale.
+    """Two Cubic Secure devices registered under the same property used to
+    collapse into one, because both the coordinator and the sensor
+    entities kept a single unkeyed slot instead of one per device identity
+    - the second device's entities got the first device's data (or a
+    duplicate unique_id HA silently dropped), while the first device's own
+    entities went stale.
     """
     await _setup_entry(hass, fake_manager_with_two_cubic_devices)
 

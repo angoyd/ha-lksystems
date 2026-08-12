@@ -246,10 +246,10 @@ class TestCubicFetchFailureFallback:
 
 
 class TestMultipleCubicSecureDevices:
-    """Regression coverage for issue #29: two Cubic Secure devices
-    registered under the same property used to stomp on each other, since
-    the coordinator kept a single unkeyed slot for machine_info/
-    last_measurement/configuration instead of one per device identity.
+    """Two Cubic Secure devices registered under the same property used to
+    stomp on each other, since the coordinator kept a single unkeyed slot
+    for machine_info/last_measurement/configuration instead of one per
+    device identity.
     """
 
     async def test_both_devices_keep_their_own_machine_info(
