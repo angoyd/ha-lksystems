@@ -390,10 +390,8 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
 
         Auth failures raise a repair issue immediately - HA's own reauth
         flow already treats them as non-transient. A fetch failure only
-        raises one after CONSECUTIVE_FAILURE_THRESHOLD in a row, since a
-        single failed update is routine (network blip, a 429 that
-        exhausted its retries - see issue #53) and resolves on its own via
-        the next scheduled poll.
+        raises one after CONSECUTIVE_FAILURE_THRESHOLD in a row (see that
+        constant's own comment for why).
         """
         try:
             resp = await self._fetch_data()
@@ -409,10 +407,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             raise
         else:
             self._consecutive_failures = 0
-            repairs.async_clear_auth_failed_issue(self.hass, self._entry_id)
-            repairs.async_clear_persistent_update_failure_issue(
-                self.hass, self._entry_id
-            )
+            repairs.async_clear_all_issues(self.hass, self._entry_id)
             return resp
 
     async def _fetch_data(self) -> LkStructureResp:  # noqa: C901

@@ -31,6 +31,7 @@ from custom_components.lksystems.const import (
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
 )
+from custom_components.lksystems.repairs import _issue_id
 
 from .conftest import (
     CUBIC_IDENTITY,
@@ -38,6 +39,7 @@ from .conftest import (
     HUB_IDENTITY,
     SENSOR_MAC,
     THERMOSTAT_MAC,
+    get_issue,
 )
 
 
@@ -197,10 +199,6 @@ class TestAsyncUpdateData:
         assert TOKEN_STORAGE[entry.entry_id]["jwt"] == "fake-jwt-token"
 
 
-def _get_issue(hass, issue_id: str):
-    return ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
-
-
 class TestRepairIssues:
     """A failed update should surface as a repair issue (issue #50) instead
     of only a log line - auth failures immediately (HA's own reauth flow
@@ -216,7 +214,7 @@ class TestRepairIssues:
         with pytest.raises(ConfigEntryAuthFailed):
             await coordinator._async_update_data()
 
-        assert _get_issue(hass, f"auth_failed_{entry.entry_id}") is not None
+        assert get_issue(hass, _issue_id("auth_failed", entry.entry_id)) is not None
 
     async def test_successful_update_clears_the_auth_failed_issue(
         self, hass, fake_manager
@@ -226,7 +224,7 @@ class TestRepairIssues:
         ir.async_create_issue(
             hass,
             DOMAIN,
-            f"auth_failed_{entry.entry_id}",
+            _issue_id("auth_failed", entry.entry_id),
             is_fixable=False,
             severity=ir.IssueSeverity.ERROR,
             translation_key="auth_failed",
@@ -235,7 +233,7 @@ class TestRepairIssues:
         with _patch_manager(fake_manager):
             await coordinator._async_update_data()
 
-        assert _get_issue(hass, f"auth_failed_{entry.entry_id}") is None
+        assert get_issue(hass, _issue_id("auth_failed", entry.entry_id)) is None
 
     async def test_single_fetch_failure_does_not_raise_a_persistent_issue(
         self, hass, fake_manager
@@ -248,7 +246,10 @@ class TestRepairIssues:
             with pytest.raises(UpdateFailed):
                 await coordinator._async_update_data()
 
-        assert _get_issue(hass, f"persistent_update_failure_{entry.entry_id}") is None
+        assert (
+            get_issue(hass, _issue_id("persistent_update_failure", entry.entry_id))
+            is None
+        )
 
     async def test_consecutive_fetch_failures_raise_a_persistent_issue(
         self, hass, fake_manager
@@ -263,7 +264,7 @@ class TestRepairIssues:
                     await coordinator._async_update_data()
 
         assert (
-            _get_issue(hass, f"persistent_update_failure_{entry.entry_id}")
+            get_issue(hass, _issue_id("persistent_update_failure", entry.entry_id))
             is not None
         )
 
@@ -283,7 +284,10 @@ class TestRepairIssues:
         with _patch_manager(fake_manager):
             await coordinator._async_update_data()
 
-        assert _get_issue(hass, f"persistent_update_failure_{entry.entry_id}") is None
+        assert (
+            get_issue(hass, _issue_id("persistent_update_failure", entry.entry_id))
+            is None
+        )
 
 
 class TestCubicFetchFailureFallback:

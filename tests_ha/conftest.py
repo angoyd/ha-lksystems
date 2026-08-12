@@ -19,6 +19,9 @@ import asyncio
 import time
 
 import pytest
+from homeassistant.helpers import issue_registry as ir
+
+from custom_components.lksystems.const import DOMAIN
 
 pytest_plugins = "pytest_homeassistant_custom_component"
 
@@ -345,3 +348,8 @@ def fake_manager() -> FakeLKSystemsManager:
     manager = FakeLKSystemsManager()
     configure_fake_manager_with_sample_data(manager)
     return manager
+
+
+def get_issue(hass, issue_id: str):
+    """Look up a repair issue by id via the issue registry."""
+    return ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
