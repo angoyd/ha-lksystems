@@ -11,12 +11,12 @@ from .conftest import CUBIC_IDENTITY, entity_id as _entity_id, setup_entry as _s
 
 
 async def test_last_status_sensor_name_says_what_it_represents(hass, fake_manager):
-    """lastStatus is the device's last data transmission to LK's cloud
-    (confirmed against the LK app's own "Last data sent" wording), not a
-    generic "status" - the entity name should say so."""
+    """lastStatus is when the device itself last reported to LK's cloud,
+    not a generic "status" and not something the integration sends -
+    the entity name should say so without implying either of those."""
     await _setup_entry(hass, fake_manager)
 
     entity_id = _entity_id(hass, "sensor", f"LkUid_lastStatus_{CUBIC_IDENTITY}")
     state = hass.states.get(entity_id)
 
-    assert state.attributes["friendly_name"] == "Cubic Secure Utility Room Last Data Sent"
+    assert state.attributes["friendly_name"] == "Cubic Secure Utility Room Last Device Report"
