@@ -159,15 +159,12 @@ class LKThermostat(CoordinatorEntity, RestoreEntity, ClimateEntity):
         self._attr_device_info = DeviceInfo(**device_info)
         self._attr_hvac_mode = HVACMode.HEAT
 
-        # Restored from the entity's state as of before an HA restart -
-        # see restore.py. Only used as a fallback when the coordinator
-        # doesn't currently have live data for this entity.
         self._restored_current_temperature = None
         self._restored_target_temperature = None
         self._restored_last_fetch = None
 
     async def async_added_to_hass(self) -> None:
-        """Restore the last-known temperatures across an HA restart (issue #54)."""
+        """Restore the last-known temperatures across an HA restart."""
         await super().async_added_to_hass()
 
         last_state = await self.async_get_last_state()
@@ -217,7 +214,7 @@ class LKThermostat(CoordinatorEntity, RestoreEntity, ClimateEntity):
     @property
     def current_temperature(self) -> Optional[float]:
         """Return the current temperature, falling back to the
-        last-restored value (issue #54) if there's no live one."""
+        last-restored value if there's no live one."""
         value = self._live_current_temperature()
         if value is not None:
             return value
@@ -255,7 +252,7 @@ class LKThermostat(CoordinatorEntity, RestoreEntity, ClimateEntity):
     @property
     def target_temperature(self) -> Optional[float]:
         """Return the target temperature, falling back to the
-        last-restored value (issue #54) if there's no live one."""
+        last-restored value if there's no live one."""
         value = self._live_target_temperature()
         if value is not None:
             return value
@@ -308,8 +305,7 @@ class LKThermostat(CoordinatorEntity, RestoreEntity, ClimateEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose the last-successful-fetch timestamp for freshness
-        (issue #54) - see restore.py."""
+        """Expose the last-successful-fetch timestamp."""
         if self.coordinator.last_successful_fetch is None:
             return {}
         return {

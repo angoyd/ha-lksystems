@@ -213,9 +213,6 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         self._cubic_identity = None
         self._last_update_time = dt_util.now()
         self._entry_id = entry.entry_id
-        # Set on every successful update, left untouched on failure - lets
-        # restored entity state (issue #54) judge its own freshness across
-        # a restart. See restore.py.
         self.last_successful_fetch: datetime | None = None
 
         # Initialize coordinator with update interval
