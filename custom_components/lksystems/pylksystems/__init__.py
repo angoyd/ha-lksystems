@@ -39,21 +39,32 @@ REQUEST_TIMEOUT = ClientTimeout(total=20)
 RATE_LIMIT_STATUS = 429
 RATE_LIMIT_MAX_RETRIES = 3
 RATE_LIMIT_DEFAULT_BACKOFF = 5.0  # seconds, used when no Retry-After header
+RATE_LIMIT_MIN_BACKOFF = 1.0  # floor, in case Retry-After is 0 or tiny
 
 
 def _rate_limit_backoff(response) -> float:
     """Return the delay to wait before retrying a 429 response.
 
     Honors the Retry-After header (seconds) when LK's API provides one,
-    falling back to a default backoff otherwise.
+    falling back to a default backoff otherwise. Never returns less than
+    RATE_LIMIT_MIN_BACKOFF - a Retry-After of 0 would otherwise collapse
+    the retry into an immediate one, indistinguishable from not backing
+    off at all.
     """
     retry_after = response.headers.get("Retry-After")
     if retry_after is not None:
         try:
-            return float(retry_after)
+            return max(float(retry_after), RATE_LIMIT_MIN_BACKOFF)
         except ValueError:
             pass
     return RATE_LIMIT_DEFAULT_BACKOFF
+
+
+def _retry_delay_for_response(response, attempt: int) -> float | None:
+    """Return the backoff delay if response is a retryable 429, else None."""
+    if response.status == RATE_LIMIT_STATUS and attempt < RATE_LIMIT_MAX_RETRIES:
+        return _rate_limit_backoff(response)
+    return None
 
 
 # Add the missing LKSystemsError class
@@ -164,6 +175,17 @@ class LKSystemsManager:
             "ocp-apim-subscription-key": "d2d308826cd14e7d92660b28bc7d859c",
         }
 
+    async def _sleep_before_retry(self, endpoint: str, delay: float, attempt: int) -> None:
+        """Log and wait out a 429's backoff before the next retry attempt."""
+        _LOGGER.warning(
+            "Rate limited (429) by LK Systems API, retrying %s in %.1fs (attempt %d/%d)",
+            self.base_url + endpoint,
+            delay,
+            attempt + 1,
+            RATE_LIMIT_MAX_RETRIES,
+        )
+        await asyncio.sleep(delay)
+
     async def _get(self, endpoint):
         """Helper method to perform GET requests."""
         headers = {}
@@ -179,35 +201,25 @@ class LKSystemsManager:
                 async with self.session.get(
                     self.base_url + endpoint, headers=headers
                 ) as response:
-                    if (
-                        response.status == RATE_LIMIT_STATUS
-                        and attempt < RATE_LIMIT_MAX_RETRIES
-                    ):
-                        delay = _rate_limit_backoff(response)
-                        _LOGGER.warning(
-                            "Rate limited (429) by LK Systems API, retrying %s in "
-                            "%.1fs (attempt %d/%d)",
+                    delay = _retry_delay_for_response(response, attempt)
+                    if delay is None:
+                        response.raise_for_status()
+                        if response.status == 200:
+                            res = await response.json()
+
+                            return True, res
+
+                        _LOGGER.error(
+                            "Obtaining data from URL %s failed with status code %d",
                             self.base_url + endpoint,
-                            delay,
-                            attempt + 1,
-                            RATE_LIMIT_MAX_RETRIES,
+                            response.status,
                         )
-                        await asyncio.sleep(delay)
-                        attempt += 1
-                        continue
+                        return False, None
 
-                    response.raise_for_status()
-                    if response.status == 200:
-                        res = await response.json()
-
-                        return True, res
-
-                    _LOGGER.error(
-                        "Obtaining data from URL %s failed with status code %d",
-                        self.base_url + endpoint,
-                        response.status,
-                    )
-                    return False, None
+                # Outside the `async with` - the connection is released
+                # before waiting out the backoff, not held open for it.
+                await self._sleep_before_retry(endpoint, delay, attempt)
+                attempt += 1
 
             except (ClientResponseError, ClientError) as error:
                 return (await self.handle_client_error(endpoint, headers, error)), None
@@ -227,35 +239,23 @@ class LKSystemsManager:
                 async with self.session.post(
                     self.base_url + endpoint, json=payload, headers=headers
                 ) as response:
-                    if (
-                        response.status == RATE_LIMIT_STATUS
-                        and attempt < RATE_LIMIT_MAX_RETRIES
-                    ):
-                        delay = _rate_limit_backoff(response)
-                        _LOGGER.warning(
-                            "Rate limited (429) by LK Systems API, retrying %s in "
-                            "%.1fs (attempt %d/%d)",
+                    delay = _retry_delay_for_response(response, attempt)
+                    if delay is None:
+                        response.raise_for_status()
+                        if response.status in [200, 201]:
+                            res = await response.json(content_type=None)
+
+                            return True, res
+
+                        _LOGGER.error(
+                            "Posting data to URL %s failed with status code %d",
                             self.base_url + endpoint,
-                            delay,
-                            attempt + 1,
-                            RATE_LIMIT_MAX_RETRIES,
+                            response.status,
                         )
-                        await asyncio.sleep(delay)
-                        attempt += 1
-                        continue
+                        return False, None
 
-                    response.raise_for_status()
-                    if response.status in [200, 201]:
-                        res = await response.json(content_type=None)
-
-                        return True, res
-
-                    _LOGGER.error(
-                        "Posting data to URL %s failed with status code %d",
-                        self.base_url + endpoint,
-                        response.status,
-                    )
-                    return False, None
+                await self._sleep_before_retry(endpoint, delay, attempt)
+                attempt += 1
 
             except (ClientResponseError, ClientError) as error:
                 return (await self.handle_client_error(endpoint, headers, error)), None

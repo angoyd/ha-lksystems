@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from aiohttp import ClientConnectionError
 from aioresponses import aioresponses
 
@@ -376,83 +377,104 @@ class TestRateLimitBackoff:
     instead of failing immediately, and log at warning rather than error.
     """
 
-    async def test_429_is_retried_and_eventually_succeeds(self, manager):
+    @pytest.fixture(autouse=True)
+    def mock_sleep(self):
+        """Patch asyncio.sleep for every test in this class - none of them
+        should actually wait out a real backoff delay."""
+        with patch("asyncio.sleep", new=AsyncMock()) as mock:
+            yield mock
+
+    async def test_429_is_retried_and_eventually_succeeds(self, manager, mock_sleep):
         url = BASE_URL + "service/cubic/secure/cubic-1/measurement/0"
 
         with aioresponses() as m:
             m.get(url, status=429, headers={"Retry-After": "1"})
             m.get(url, payload={"flow": 0.0}, status=200)
-            with patch("asyncio.sleep", new=AsyncMock()):
-                async with manager:
-                    result = await manager.get_cubic_secure_measurement("cubic-1")
+            async with manager:
+                result = await manager.get_cubic_secure_measurement("cubic-1")
 
         assert result is True
         assert manager.cubic_secure_messurement == {"flow": 0.0}
 
-    async def test_429_honors_retry_after_header(self, manager):
+    async def test_429_honors_retry_after_header(self, manager, mock_sleep):
         url = BASE_URL + "service/cubic/secure/cubic-1/measurement/0"
 
         with aioresponses() as m:
             m.get(url, status=429, headers={"Retry-After": "7"})
             m.get(url, payload={"flow": 0.0}, status=200)
-            with patch("asyncio.sleep", new=AsyncMock()) as mock_sleep:
-                async with manager:
-                    await manager.get_cubic_secure_measurement("cubic-1")
+            async with manager:
+                await manager.get_cubic_secure_measurement("cubic-1")
 
         mock_sleep.assert_awaited_once_with(7.0)
 
-    async def test_429_without_retry_after_uses_a_default_backoff(self, manager):
+    async def test_429_without_retry_after_uses_a_default_backoff(
+        self, manager, mock_sleep
+    ):
         url = BASE_URL + "service/cubic/secure/cubic-1/measurement/0"
 
         with aioresponses() as m:
             m.get(url, status=429)
             m.get(url, payload={"flow": 0.0}, status=200)
-            with patch("asyncio.sleep", new=AsyncMock()) as mock_sleep:
-                async with manager:
-                    await manager.get_cubic_secure_measurement("cubic-1")
+            async with manager:
+                await manager.get_cubic_secure_measurement("cubic-1")
 
         mock_sleep.assert_awaited_once()
         assert mock_sleep.await_args.args[0] > 0
 
-    async def test_429_exhausting_retries_returns_false(self, manager):
+    async def test_429_with_a_zero_retry_after_still_backs_off(
+        self, manager, mock_sleep
+    ):
+        """A Retry-After of 0 (or anything below the floor) shouldn't
+        collapse the backoff to an immediate retry - that's indistinguishable
+        from not backing off at all, defeating the point of retrying."""
+        url = BASE_URL + "service/cubic/secure/cubic-1/measurement/0"
+
+        with aioresponses() as m:
+            m.get(url, status=429, headers={"Retry-After": "0"})
+            m.get(url, payload={"flow": 0.0}, status=200)
+            async with manager:
+                await manager.get_cubic_secure_measurement("cubic-1")
+
+        mock_sleep.assert_awaited_once()
+        assert mock_sleep.await_args.args[0] > 0
+
+    async def test_429_exhausting_retries_returns_false(self, manager, mock_sleep):
         manager.userid = "user-123"
         url = BASE_URL + "service/users/user/user-123/structure/1"
 
         with aioresponses() as m:
             m.get(url, status=429, repeat=True)
-            with patch("asyncio.sleep", new=AsyncMock()):
-                async with manager:
-                    result = await manager.get_user_structure()
+            async with manager:
+                result = await manager.get_user_structure()
 
         assert result is False
         assert manager.user_structure is None
 
-    async def test_429_exhausting_retries_logs_warning_not_error(self, manager, caplog):
+    async def test_429_exhausting_retries_logs_warning_not_error(
+        self, manager, mock_sleep, caplog
+    ):
         manager.userid = "user-123"
         url = BASE_URL + "service/users/user/user-123/structure/1"
 
         with aioresponses() as m:
             m.get(url, status=429, repeat=True)
-            with patch("asyncio.sleep", new=AsyncMock()):
-                with caplog.at_level(logging.WARNING):
-                    async with manager:
-                        await manager.get_user_structure()
+            with caplog.at_level(logging.WARNING):
+                async with manager:
+                    await manager.get_user_structure()
 
         assert not any(record.levelno >= logging.ERROR for record in caplog.records)
         assert "429" in caplog.text
 
-    async def test_post_429_is_retried_and_eventually_succeeds(self, manager):
-        # cubic_secure_close_valve() goes through the _post() helper (unlike
-        # set_device_temperature(), which makes its own raw session.post()
-        # call and isn't covered by this retry loop).
+    async def test_post_429_is_retried_and_eventually_succeeds(
+        self, manager, mock_sleep
+    ):
         url = BASE_URL + "control/cubic/secure/cubic-1/valve/close"
 
         with aioresponses() as m:
             m.post(url, status=429, headers={"Retry-After": "1"})
             m.post(url, payload={}, status=200)
-            with patch("asyncio.sleep", new=AsyncMock()):
-                async with manager:
-                    result = await manager.cubic_secure_close_valve("cubic-1")
+            async with manager:
+                result = await manager.cubic_secure_close_valve("cubic-1")
 
         assert result is True
 
