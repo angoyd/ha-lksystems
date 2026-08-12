@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -194,6 +195,95 @@ class TestAsyncUpdateData:
 
         assert ("login",) in fake_manager.calls
         assert TOKEN_STORAGE[entry.entry_id]["jwt"] == "fake-jwt-token"
+
+
+def _get_issue(hass, issue_id: str):
+    return ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+
+
+class TestRepairIssues:
+    """A failed update should surface as a repair issue (issue #50) instead
+    of only a log line - auth failures immediately (HA's own reauth flow
+    already treats them as non-transient), fetch failures only after
+    CONSECUTIVE_FAILURE_THRESHOLD in a row (a single failure is routine and
+    resolves on its own via the next scheduled poll)."""
+
+    async def test_auth_failure_raises_a_repair_issue(self, hass):
+        entry = MockConfigEntry(domain=DOMAIN, data={})
+        entry.add_to_hass(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with pytest.raises(ConfigEntryAuthFailed):
+            await coordinator._async_update_data()
+
+        assert _get_issue(hass, f"auth_failed_{entry.entry_id}") is not None
+
+    async def test_successful_update_clears_the_auth_failed_issue(
+        self, hass, fake_manager
+    ):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            f"auth_failed_{entry.entry_id}",
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="auth_failed",
+        )
+
+        with _patch_manager(fake_manager):
+            await coordinator._async_update_data()
+
+        assert _get_issue(hass, f"auth_failed_{entry.entry_id}") is None
+
+    async def test_single_fetch_failure_does_not_raise_a_persistent_issue(
+        self, hass, fake_manager
+    ):
+        fake_manager.get_user_structure_result = False
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            with pytest.raises(UpdateFailed):
+                await coordinator._async_update_data()
+
+        assert _get_issue(hass, f"persistent_update_failure_{entry.entry_id}") is None
+
+    async def test_consecutive_fetch_failures_raise_a_persistent_issue(
+        self, hass, fake_manager
+    ):
+        fake_manager.get_user_structure_result = False
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            for _ in range(3):
+                with pytest.raises(UpdateFailed):
+                    await coordinator._async_update_data()
+
+        assert (
+            _get_issue(hass, f"persistent_update_failure_{entry.entry_id}")
+            is not None
+        )
+
+    async def test_successful_update_after_failures_clears_the_persistent_issue(
+        self, hass, fake_manager
+    ):
+        fake_manager.get_user_structure_result = False
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            for _ in range(3):
+                with pytest.raises(UpdateFailed):
+                    await coordinator._async_update_data()
+
+        fake_manager.get_user_structure_result = True
+        with _patch_manager(fake_manager):
+            await coordinator._async_update_data()
+
+        assert _get_issue(hass, f"persistent_update_failure_{entry.entry_id}") is None
 
 
 class TestCubicFetchFailureFallback:

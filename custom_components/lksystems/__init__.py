@@ -38,10 +38,17 @@ from .pylksystems import (
     LKPressureThresholds,
 )
 from .redact import mask_username
+from . import repairs
 
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
+
+# Number of consecutive failed updates before a persistent-failure repair
+# issue is raised - a single failed update is routine (network blip, a 429
+# that exhausted its retries) and resolves on its own via the next
+# scheduled poll, so only a run of failures is worth surfacing.
+CONSECUTIVE_FAILURE_THRESHOLD = 3
 
 # Define the platforms we support
 PLATFORMS = [Platform.SENSOR, Platform.CLIMATE]
@@ -213,6 +220,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         self._cubic_identity = None
         self._last_update_time = dt_util.now()
         self._entry_id = entry.entry_id
+        self._consecutive_failures = 0
 
         # Initialize coordinator with update interval
         super().__init__(
@@ -377,7 +385,37 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             _LOGGER.error("Error during forced device update: %s", ex)
             return False
 
-    async def _async_update_data(self) -> LkStructureResp:  # noqa: C901
+    async def _async_update_data(self) -> LkStructureResp:
+        """Fetch the latest data, surfacing persistent failures as repair issues.
+
+        Auth failures raise a repair issue immediately - HA's own reauth
+        flow already treats them as non-transient. A fetch failure only
+        raises one after CONSECUTIVE_FAILURE_THRESHOLD in a row, since a
+        single failed update is routine (network blip, a 429 that
+        exhausted its retries - see issue #53) and resolves on its own via
+        the next scheduled poll.
+        """
+        try:
+            resp = await self._fetch_data()
+        except ConfigEntryAuthFailed:
+            repairs.async_create_auth_failed_issue(self.hass, self._entry_id)
+            raise
+        except UpdateFailed:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= CONSECUTIVE_FAILURE_THRESHOLD:
+                repairs.async_create_persistent_update_failure_issue(
+                    self.hass, self._entry_id
+                )
+            raise
+        else:
+            self._consecutive_failures = 0
+            repairs.async_clear_auth_failed_issue(self.hass, self._entry_id)
+            repairs.async_clear_persistent_update_failure_issue(
+                self.hass, self._entry_id
+            )
+            return resp
+
+    async def _fetch_data(self) -> LkStructureResp:  # noqa: C901
         """Fetch the latest data from the source."""
         # Record update time at the beginning of update
         self._last_update_time = dt_util.now()

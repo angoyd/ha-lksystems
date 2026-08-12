@@ -18,7 +18,15 @@
         "abort": {
             "already_configured": "This LK Systems account is already configured. One integration entry covers your whole account, including multiple Cubic Secure devices - you don't need to add it again to see additional devices."
         }
+    },
+    "issues": {
+        "auth_failed": {
+            "title": "LK Systems authentication failed",
+            "description": "The integration could not log in to your LK Systems account. Go to Settings > Devices & Services, select LK Systems, and follow the reauthentication prompt to re-enter your username and password."
+        },
+        "persistent_update_failure": {
+            "title": "LK Systems repeatedly failed to update",
+            "description": "The integration has failed to fetch data from the LK Systems cloud API several times in a row. Check your internet connection and the LK Systems service status. This clears automatically once an update succeeds."
+        }
     }
 }
-  
-  
