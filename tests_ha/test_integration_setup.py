@@ -12,10 +12,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
-from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
 from custom_components.lksystems.const import DOMAIN
 
 from .conftest import (
@@ -24,25 +20,9 @@ from .conftest import (
     HUB_IDENTITY,
     SENSOR_MAC,
     THERMOSTAT_MAC,
+    entity_id as _entity_id,
+    setup_entry as _setup_entry,
 )
-
-
-async def _setup_entry(hass, manager) -> MockConfigEntry:
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={CONF_USERNAME: "user@example.com", CONF_PASSWORD: "hunter2"},
-    )
-    entry.add_to_hass(hass)
-    with patch("custom_components.lksystems.LKSystemsManager", return_value=manager):
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
-    return entry
-
-
-def _entity_id(hass, platform: str, unique_id: str) -> str:
-    entity_id = er.async_get(hass).async_get_entity_id(platform, DOMAIN, unique_id)
-    assert entity_id is not None, f"no {platform} entity registered for {unique_id!r}"
-    return entity_id
 
 
 async def test_thermostat_entity_reflects_client_data(hass, fake_manager):
@@ -58,6 +38,8 @@ async def test_thermostat_entity_reflects_client_data(hass, fake_manager):
 
 
 async def test_standalone_sensor_entities_reflect_client_data(hass, fake_manager):
+    """RSSI is excluded here - it's disabled by default (issue #57), so it
+    has no live state to assert on; see test_sensor.py for that."""
     await _setup_entry(hass, fake_manager)
 
     temperature_id = _entity_id(
@@ -65,12 +47,10 @@ async def test_standalone_sensor_entities_reflect_client_data(hass, fake_manager
     )
     humidity_id = _entity_id(hass, "sensor", f"{DOMAIN}_{SENSOR_MAC}_humidity")
     battery_id = _entity_id(hass, "sensor", f"{DOMAIN}_{SENSOR_MAC}_battery")
-    rssi_id = _entity_id(hass, "sensor", f"{DOMAIN}_{SENSOR_MAC}_rssi")
 
     assert hass.states.get(temperature_id).state == "19.0"
     assert hass.states.get(humidity_id).state == "40.0"
     assert hass.states.get(battery_id).state == "75"
-    assert hass.states.get(rssi_id).state == "-60"
 
 
 async def test_hub_and_hub_child_entities_are_created(hass, fake_manager):
