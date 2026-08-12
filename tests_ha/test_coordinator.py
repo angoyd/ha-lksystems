@@ -200,9 +200,9 @@ class TestAsyncUpdateData:
 
 
 class TestRepairIssues:
-    """A failed update should surface as a repair issue (issue #50) instead
-    of only a log line - auth failures immediately (HA's own reauth flow
-    already treats them as non-transient), fetch failures only after
+    """A failed update should surface as a repair issue instead of only a
+    log line - auth failures immediately (HA's own reauth flow already
+    treats them as non-transient), fetch failures only after
     CONSECUTIVE_FAILURE_THRESHOLD in a row (a single failure is routine and
     resolves on its own via the next scheduled poll)."""
 
