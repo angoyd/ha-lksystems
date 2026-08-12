@@ -6,6 +6,7 @@ import logging
 from typing import Any, Optional
 
 from homeassistant.components.climate import (
+    ATTR_CURRENT_TEMPERATURE,
     ClimateEntity,
     ClimateEntityDescription,
     ClimateEntityFeature,
@@ -17,10 +18,13 @@ from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from . import LKSystemCoordinator
 from .const import DOMAIN, INTEGRATION_NAME
+from .restore import ATTR_LAST_SUCCESSFUL_FETCH, is_restored_value_fresh
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -96,7 +100,7 @@ async def async_setup_entry(
         _LOGGER.debug(f"Added {len(entities)} LK Systems climate entities")
 
 
-class LKThermostat(CoordinatorEntity, ClimateEntity):
+class LKThermostat(CoordinatorEntity, RestoreEntity, ClimateEntity):
     """LK Systems thermostat climate entity."""
 
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
@@ -154,7 +158,37 @@ class LKThermostat(CoordinatorEntity, ClimateEntity):
         
         self._attr_device_info = DeviceInfo(**device_info)
         self._attr_hvac_mode = HVACMode.HEAT
-    
+
+        # Restored from the entity's state as of before an HA restart -
+        # see restore.py. Only used as a fallback when the coordinator
+        # doesn't currently have live data for this entity.
+        self._restored_current_temperature = None
+        self._restored_target_temperature = None
+        self._restored_last_fetch = None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the last-known temperatures across an HA restart (issue #54)."""
+        await super().async_added_to_hass()
+
+        last_state = await self.async_get_last_state()
+        if last_state is None:
+            return
+
+        self._restored_current_temperature = last_state.attributes.get(
+            ATTR_CURRENT_TEMPERATURE
+        )
+        self._restored_target_temperature = last_state.attributes.get(
+            ATTR_TEMPERATURE
+        )
+        last_fetch = last_state.attributes.get(ATTR_LAST_SUCCESSFUL_FETCH)
+        if last_fetch:
+            self._restored_last_fetch = dt_util.parse_datetime(last_fetch)
+
+    def _is_restore_fresh(self) -> bool:
+        return is_restored_value_fresh(
+            self._restored_last_fetch, self.coordinator.update_interval
+        )
+
     @property
     def available(self) -> bool:
         """Return if entity is available."""
@@ -182,7 +216,17 @@ class LKThermostat(CoordinatorEntity, ClimateEntity):
     
     @property
     def current_temperature(self) -> Optional[float]:
-        """Return the current temperature."""
+        """Return the current temperature, falling back to the
+        last-restored value (issue #54) if there's no live one."""
+        value = self._live_current_temperature()
+        if value is not None:
+            return value
+        if self._is_restore_fresh():
+            return self._restored_current_temperature
+        return None
+
+    def _live_current_temperature(self) -> Optional[float]:
+        """Return the current temperature from the coordinator's live data."""
         # Find the most recent temperature data
         for device in self.coordinator.data.get("devices", []):
             device_title = device.get("deviceTitle", {})
@@ -210,7 +254,17 @@ class LKThermostat(CoordinatorEntity, ClimateEntity):
     
     @property
     def target_temperature(self) -> Optional[float]:
-        """Return the target temperature."""
+        """Return the target temperature, falling back to the
+        last-restored value (issue #54) if there's no live one."""
+        value = self._live_target_temperature()
+        if value is not None:
+            return value
+        if self._is_restore_fresh():
+            return self._restored_target_temperature
+        return None
+
+    def _live_target_temperature(self) -> Optional[float]:
+        """Return the target temperature from the coordinator's live data."""
         # Find the most recent temperature data
         for device in self.coordinator.data.get("devices", []):
             device_title = device.get("deviceTitle", {})
@@ -249,8 +303,18 @@ class LKThermostat(CoordinatorEntity, ClimateEntity):
                 return HVACAction.HEATING
             else:
                 return HVACAction.IDLE
-                
+
         return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the last-successful-fetch timestamp for freshness
+        (issue #54) - see restore.py."""
+        if self.coordinator.last_successful_fetch is None:
+            return {}
+        return {
+            ATTR_LAST_SUCCESSFUL_FETCH: self.coordinator.last_successful_fetch.isoformat()
+        }
     
     async def async_set_temperature(self, **kwargs) -> None:
         """Set new target temperature."""

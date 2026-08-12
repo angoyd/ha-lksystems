@@ -6,6 +6,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
@@ -38,6 +39,7 @@ from .const import (
     LK_CUBICSECURE_CONFIG_SENSORS,
     MANUFACTURER,
 )
+from .restore import ATTR_LAST_SUCCESSFUL_FETCH, is_restored_value_fresh
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -386,7 +388,7 @@ async def async_setup_entry(
         _LOGGER.debug("Added %d sensor entities", len(sensor_entities))
 
 
-class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
+class LKArcSensorEntity(CoordinatorEntity, RestoreSensor):
     """Representation of an LK Systems sensor entity."""
 
     def __init__(
@@ -471,6 +473,34 @@ class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
 
         self._attr_device_info = DeviceInfo(**device_info)
 
+        # Restored from the entity's state as of before an HA restart -
+        # see restore.py. Only used as a fallback when the coordinator
+        # doesn't currently have a live value for this entity.
+        self._restored_native_value = None
+        self._restored_last_fetch = None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the last-known value across an HA restart (issue #54)."""
+        await super().async_added_to_hass()
+
+        last_sensor_data = await self.async_get_last_sensor_data()
+        if last_sensor_data is not None:
+            self._restored_native_value = last_sensor_data.native_value
+
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            last_fetch = last_state.attributes.get(ATTR_LAST_SUCCESSFUL_FETCH)
+            if last_fetch:
+                self._restored_last_fetch = dt_util.parse_datetime(last_fetch)
+
+    def _restored_value_if_fresh(self):
+        """Return the restored value, or None if there isn't one or it's stale."""
+        if is_restored_value_fresh(
+            self._restored_last_fetch, self.coordinator.update_interval
+        ):
+            return self._restored_native_value
+        return None
+
     @property
     def available(self) -> bool:
         """Return if entity is available."""
@@ -512,7 +542,15 @@ class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self) -> Any:
-        """Return the value of the sensor."""
+        """Return the value of the sensor, falling back to the last-restored
+        value (issue #54) if the coordinator doesn't currently have one."""
+        value = self._live_native_value()
+        if value is not None:
+            return value
+        return self._restored_value_if_fresh()
+
+    def _live_native_value(self) -> Any:
+        """Return the value of the sensor from the coordinator's live data."""
         # First check device_details for the most up-to-date information
         if "device_details" in self.coordinator.data:
             device_details = self.coordinator.data["device_details"].get(
@@ -710,10 +748,17 @@ class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
         # Add refresh button attribute with a timestamp to force UI refresh
         attrs["refresh_timestamp"] = dt_util.now().timestamp()
 
+        # So a value shown after an HA restart can judge its own freshness
+        # (issue #54) - see restore.py.
+        if self.coordinator.last_successful_fetch is not None:
+            attrs[ATTR_LAST_SUCCESSFUL_FETCH] = (
+                self.coordinator.last_successful_fetch.isoformat()
+            )
+
         return attrs
 
 
-class LKArcHubEntity(CoordinatorEntity, SensorEntity):
+class LKArcHubEntity(CoordinatorEntity, RestoreSensor):
     """Representation of an LK Systems ARC Hub entity."""
 
     def __init__(
@@ -778,6 +823,34 @@ class LKArcHubEntity(CoordinatorEntity, SensorEntity):
 
         self._attr_device_info = DeviceInfo(**device_info)
 
+        # Restored from the entity's state as of before an HA restart -
+        # see restore.py. Only used as a fallback when the coordinator
+        # doesn't currently have a live value for this entity.
+        self._restored_native_value = None
+        self._restored_last_fetch = None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the last-known value across an HA restart (issue #54)."""
+        await super().async_added_to_hass()
+
+        last_sensor_data = await self.async_get_last_sensor_data()
+        if last_sensor_data is not None:
+            self._restored_native_value = last_sensor_data.native_value
+
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            last_fetch = last_state.attributes.get(ATTR_LAST_SUCCESSFUL_FETCH)
+            if last_fetch:
+                self._restored_last_fetch = dt_util.parse_datetime(last_fetch)
+
+    def _restored_value_if_fresh(self):
+        """Return the restored value, or None if there isn't one or it's stale."""
+        if is_restored_value_fresh(
+            self._restored_last_fetch, self.coordinator.update_interval
+        ):
+            return self._restored_native_value
+        return None
+
     @property
     def device_class(self) -> Optional[str]:
         """Return the device class."""
@@ -785,7 +858,15 @@ class LKArcHubEntity(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self) -> Any:
-        """Return the value of the sensor."""
+        """Return the value of the sensor, falling back to the last-restored
+        value (issue #54) if the coordinator doesn't currently have one."""
+        value = self._live_native_value()
+        if value is not None:
+            return value
+        return self._restored_value_if_fresh()
+
+    def _live_native_value(self) -> Any:
+        """Return the value of the sensor from the coordinator's live data."""
         # First check the device_details dictionary which has the most up-to-date information
         if "device_details" in self.coordinator.data:
             device_details = self.coordinator.data["device_details"].get(
@@ -844,8 +925,18 @@ class LKArcHubEntity(CoordinatorEntity, SensorEntity):
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the last-successful-fetch timestamp for freshness
+        (issue #54) - see restore.py."""
+        if self.coordinator.last_successful_fetch is None:
+            return {}
+        return {
+            ATTR_LAST_SUCCESSFUL_FETCH: self.coordinator.last_successful_fetch.isoformat()
+        }
 
-class AbstractLkCubicSensor(CoordinatorEntity[LKSystemCoordinator], SensorEntity):
+
+class AbstractLkCubicSensor(CoordinatorEntity[LKSystemCoordinator], RestoreSensor):
     """Abstract class for an LK Cubic secure sensor."""
 
     _attr_attribution = ATTRIBUTION
@@ -869,6 +960,33 @@ class AbstractLkCubicSensor(CoordinatorEntity[LKSystemCoordinator], SensorEntity
         self.native_unit_of_measurement = description.native_unit_of_measurement
         self._attr_unique_id = f"LkUid_{description.key}_{coordinator.data['cubic_machine_info']['identity']}"
         self._attr_extra_state_attributes = {}
+        # Restored from the entity's state as of before an HA restart -
+        # see restore.py. Only used as a fallback when the coordinator
+        # doesn't currently have a live value for this entity.
+        self._restored_native_value = None
+        self._restored_last_fetch = None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the last-known value across an HA restart (issue #54)."""
+        await super().async_added_to_hass()
+
+        last_sensor_data = await self.async_get_last_sensor_data()
+        if last_sensor_data is not None:
+            self._restored_native_value = last_sensor_data.native_value
+
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            last_fetch = last_state.attributes.get(ATTR_LAST_SUCCESSFUL_FETCH)
+            if last_fetch:
+                self._restored_last_fetch = dt_util.parse_datetime(last_fetch)
+
+    def _restored_value_if_fresh(self):
+        """Return the restored value, or None if there isn't one or it's stale."""
+        if is_restored_value_fresh(
+            self._restored_last_fetch, self.coordinator.update_interval
+        ):
+            return self._restored_native_value
+        return None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -908,6 +1026,7 @@ class LKCubicSensor(AbstractLkCubicSensor):
             self._attr_extra_state_attributes.update(
                 {C_NEXT_UPDATE_TIME: self._coordinator.data["next_update_time"]}
             )
+        self._update_last_successful_fetch_attribute()
         self._attr_available = False
 
     async def async_update(self) -> None:
@@ -925,11 +1044,26 @@ class LKCubicSensor(AbstractLkCubicSensor):
             self._attr_extra_state_attributes.update(
                 {C_NEXT_UPDATE_TIME: self._coordinator.data["next_update_time"]}
             )
+        self._update_last_successful_fetch_attribute()
         super()._handle_coordinator_update()
+
+    def _update_last_successful_fetch_attribute(self) -> None:
+        if self.coordinator.last_successful_fetch is not None:
+            self._attr_extra_state_attributes[ATTR_LAST_SUCCESSFUL_FETCH] = (
+                self.coordinator.last_successful_fetch.isoformat()
+            )
 
     @property
     def native_value(self) -> Any | None:
-        """Get the latest state value."""
+        """Get the latest state value, falling back to the last-restored
+        value (issue #54) if the coordinator doesn't currently have one."""
+        value = self._live_native_value()
+        if value is not None:
+            return value
+        return self._restored_value_if_fresh()
+
+    def _live_native_value(self) -> Any | None:
+        """Get the latest state value from the coordinator's live data."""
         value = None
 
         if self._data_source == "configuration":

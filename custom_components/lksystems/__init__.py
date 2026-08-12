@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import TypedDict
-from datetime import timedelta
+from datetime import datetime, timedelta
 import asyncio
 import base64
 import json
@@ -213,6 +213,10 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         self._cubic_identity = None
         self._last_update_time = dt_util.now()
         self._entry_id = entry.entry_id
+        # Set on every successful update, left untouched on failure - lets
+        # restored entity state (issue #54) judge its own freshness across
+        # a restart. See restore.py.
+        self.last_successful_fetch: datetime | None = None
 
         # Initialize coordinator with update interval
         super().__init__(
@@ -774,6 +778,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                     resp["next_update_time"],
                 )
 
+                self.last_successful_fetch = dt_util.utcnow()
                 return resp
 
         except InvalidAuth as err:
