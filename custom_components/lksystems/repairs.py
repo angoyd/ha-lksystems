@@ -1,10 +1,9 @@
 """Repair/issue-registry integration for the LK Systems integration.
 
 Surfaces persistent failures in Settings -> System -> Repairs instead of
-only as log warnings or an entity silently going stale/unavailable (issue
-#50). Each issue is keyed per config entry so multiple accounts don't
-collide, and is cleared automatically once the condition that raised it
-resolves.
+only as log warnings or an entity silently going stale/unavailable. Each
+issue is keyed per config entry so multiple accounts don't collide, and is
+cleared automatically once the condition that raised it resolves.
 """
 
 from __future__ import annotations
