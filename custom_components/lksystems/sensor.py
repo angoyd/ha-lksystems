@@ -39,7 +39,7 @@ from .const import (
     LK_CUBICSECURE_CONFIG_SENSORS,
     MANUFACTURER,
 )
-from .restore import ATTR_LAST_SUCCESSFUL_FETCH, is_restored_value_fresh
+from .restore import RestoredNativeValueMixin, last_successful_fetch_attributes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -388,7 +388,7 @@ async def async_setup_entry(
         _LOGGER.debug("Added %d sensor entities", len(sensor_entities))
 
 
-class LKArcSensorEntity(CoordinatorEntity, RestoreSensor):
+class LKArcSensorEntity(RestoredNativeValueMixin, CoordinatorEntity, RestoreSensor):
     """Representation of an LK Systems sensor entity."""
 
     def __init__(
@@ -473,31 +473,6 @@ class LKArcSensorEntity(CoordinatorEntity, RestoreSensor):
 
         self._attr_device_info = DeviceInfo(**device_info)
 
-        self._restored_native_value = None
-        self._restored_last_fetch = None
-
-    async def async_added_to_hass(self) -> None:
-        """Restore the last-known value across an HA restart."""
-        await super().async_added_to_hass()
-
-        last_sensor_data = await self.async_get_last_sensor_data()
-        if last_sensor_data is not None:
-            self._restored_native_value = last_sensor_data.native_value
-
-        last_state = await self.async_get_last_state()
-        if last_state is not None:
-            last_fetch = last_state.attributes.get(ATTR_LAST_SUCCESSFUL_FETCH)
-            if last_fetch:
-                self._restored_last_fetch = dt_util.parse_datetime(last_fetch)
-
-    def _restored_value_if_fresh(self):
-        """Return the restored value, or None if there isn't one or it's stale."""
-        if is_restored_value_fresh(
-            self._restored_last_fetch, self.coordinator.update_interval
-        ):
-            return self._restored_native_value
-        return None
-
     @property
     def available(self) -> bool:
         """Return if entity is available."""
@@ -536,15 +511,6 @@ class LKArcSensorEntity(CoordinatorEntity, RestoreSensor):
     def native_unit_of_measurement(self) -> Optional[str]:
         """Return the unit of measurement."""
         return self._attr_unit_of_measurement
-
-    @property
-    def native_value(self) -> Any:
-        """Return the value of the sensor, falling back to the last-restored
-        value if the coordinator doesn't currently have one."""
-        value = self._live_native_value()
-        if value is not None:
-            return value
-        return self._restored_value_if_fresh()
 
     def _live_native_value(self) -> Any:
         """Return the value of the sensor from the coordinator's live data."""
@@ -745,15 +711,12 @@ class LKArcSensorEntity(CoordinatorEntity, RestoreSensor):
         # Add refresh button attribute with a timestamp to force UI refresh
         attrs["refresh_timestamp"] = dt_util.now().timestamp()
 
-        if self.coordinator.last_successful_fetch is not None:
-            attrs[ATTR_LAST_SUCCESSFUL_FETCH] = (
-                self.coordinator.last_successful_fetch.isoformat()
-            )
+        attrs.update(last_successful_fetch_attributes(self.coordinator.last_successful_fetch))
 
         return attrs
 
 
-class LKArcHubEntity(CoordinatorEntity, RestoreSensor):
+class LKArcHubEntity(RestoredNativeValueMixin, CoordinatorEntity, RestoreSensor):
     """Representation of an LK Systems ARC Hub entity."""
 
     def __init__(
@@ -818,44 +781,10 @@ class LKArcHubEntity(CoordinatorEntity, RestoreSensor):
 
         self._attr_device_info = DeviceInfo(**device_info)
 
-        self._restored_native_value = None
-        self._restored_last_fetch = None
-
-    async def async_added_to_hass(self) -> None:
-        """Restore the last-known value across an HA restart."""
-        await super().async_added_to_hass()
-
-        last_sensor_data = await self.async_get_last_sensor_data()
-        if last_sensor_data is not None:
-            self._restored_native_value = last_sensor_data.native_value
-
-        last_state = await self.async_get_last_state()
-        if last_state is not None:
-            last_fetch = last_state.attributes.get(ATTR_LAST_SUCCESSFUL_FETCH)
-            if last_fetch:
-                self._restored_last_fetch = dt_util.parse_datetime(last_fetch)
-
-    def _restored_value_if_fresh(self):
-        """Return the restored value, or None if there isn't one or it's stale."""
-        if is_restored_value_fresh(
-            self._restored_last_fetch, self.coordinator.update_interval
-        ):
-            return self._restored_native_value
-        return None
-
     @property
     def device_class(self) -> Optional[str]:
         """Return the device class."""
         return self._device_class
-
-    @property
-    def native_value(self) -> Any:
-        """Return the value of the sensor, falling back to the last-restored
-        value if the coordinator doesn't currently have one."""
-        value = self._live_native_value()
-        if value is not None:
-            return value
-        return self._restored_value_if_fresh()
 
     def _live_native_value(self) -> Any:
         """Return the value of the sensor from the coordinator's live data."""
@@ -920,14 +849,12 @@ class LKArcHubEntity(CoordinatorEntity, RestoreSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Expose the last-successful-fetch timestamp."""
-        if self.coordinator.last_successful_fetch is None:
-            return {}
-        return {
-            ATTR_LAST_SUCCESSFUL_FETCH: self.coordinator.last_successful_fetch.isoformat()
-        }
+        return last_successful_fetch_attributes(self.coordinator.last_successful_fetch)
 
 
-class AbstractLkCubicSensor(CoordinatorEntity[LKSystemCoordinator], RestoreSensor):
+class AbstractLkCubicSensor(
+    RestoredNativeValueMixin, CoordinatorEntity[LKSystemCoordinator], RestoreSensor
+):
     """Abstract class for an LK Cubic secure sensor."""
 
     _attr_attribution = ATTRIBUTION
@@ -951,30 +878,6 @@ class AbstractLkCubicSensor(CoordinatorEntity[LKSystemCoordinator], RestoreSenso
         self.native_unit_of_measurement = description.native_unit_of_measurement
         self._attr_unique_id = f"LkUid_{description.key}_{coordinator.data['cubic_machine_info']['identity']}"
         self._attr_extra_state_attributes = {}
-        self._restored_native_value = None
-        self._restored_last_fetch = None
-
-    async def async_added_to_hass(self) -> None:
-        """Restore the last-known value across an HA restart."""
-        await super().async_added_to_hass()
-
-        last_sensor_data = await self.async_get_last_sensor_data()
-        if last_sensor_data is not None:
-            self._restored_native_value = last_sensor_data.native_value
-
-        last_state = await self.async_get_last_state()
-        if last_state is not None:
-            last_fetch = last_state.attributes.get(ATTR_LAST_SUCCESSFUL_FETCH)
-            if last_fetch:
-                self._restored_last_fetch = dt_util.parse_datetime(last_fetch)
-
-    def _restored_value_if_fresh(self):
-        """Return the restored value, or None if there isn't one or it's stale."""
-        if is_restored_value_fresh(
-            self._restored_last_fetch, self.coordinator.update_interval
-        ):
-            return self._restored_native_value
-        return None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -1036,19 +939,9 @@ class LKCubicSensor(AbstractLkCubicSensor):
         super()._handle_coordinator_update()
 
     def _update_last_successful_fetch_attribute(self) -> None:
-        if self.coordinator.last_successful_fetch is not None:
-            self._attr_extra_state_attributes[ATTR_LAST_SUCCESSFUL_FETCH] = (
-                self.coordinator.last_successful_fetch.isoformat()
-            )
-
-    @property
-    def native_value(self) -> Any | None:
-        """Get the latest state value, falling back to the last-restored
-        value if the coordinator doesn't currently have one."""
-        value = self._live_native_value()
-        if value is not None:
-            return value
-        return self._restored_value_if_fresh()
+        self._attr_extra_state_attributes.update(
+            last_successful_fetch_attributes(self.coordinator.last_successful_fetch)
+        )
 
     def _live_native_value(self) -> Any | None:
         """Get the latest state value from the coordinator's live data."""

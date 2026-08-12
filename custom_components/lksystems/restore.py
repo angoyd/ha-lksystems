@@ -24,6 +24,7 @@ restored value is discarded rather than shown.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Any
 
 from homeassistant.util import dt as dt_util
 
@@ -39,3 +40,59 @@ def is_restored_value_fresh(
     if restored_last_fetch is None or update_interval is None:
         return False
     return dt_util.utcnow() - restored_last_fetch <= update_interval * STALE_THRESHOLD_MULTIPLIER
+
+
+def parse_restored_last_fetch(last_state) -> datetime | None:
+    """Parse ATTR_LAST_SUCCESSFUL_FETCH from a restored state's attributes."""
+    last_fetch = last_state.attributes.get(ATTR_LAST_SUCCESSFUL_FETCH)
+    if not last_fetch:
+        return None
+    return dt_util.parse_datetime(last_fetch)
+
+
+def last_successful_fetch_attributes(
+    last_successful_fetch: datetime | None,
+) -> dict[str, str]:
+    """Return the extra_state_attributes payload exposing last_successful_fetch."""
+    if last_successful_fetch is None:
+        return {}
+    return {ATTR_LAST_SUCCESSFUL_FETCH: last_successful_fetch.isoformat()}
+
+
+class RestoredNativeValueMixin:
+    """Restore a sensor's last-known native value uniformly across an HA restart.
+
+    Mixed in ahead of CoordinatorEntity and RestoreSensor, whose
+    self.coordinator and async_get_last_sensor_data()/async_get_last_state()
+    this relies on. Subclasses supply the live lookup via _live_native_value();
+    this then owns the fallback to the restored value once that comes back
+    empty.
+    """
+
+    _restored_native_value: Any = None
+    _restored_last_fetch: datetime | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the last-known value across an HA restart."""
+        await super().async_added_to_hass()
+
+        last_sensor_data = await self.async_get_last_sensor_data()
+        if last_sensor_data is not None:
+            self._restored_native_value = last_sensor_data.native_value
+
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            self._restored_last_fetch = parse_restored_last_fetch(last_state)
+
+    @property
+    def native_value(self) -> Any:
+        """Return the live value, falling back to the last-restored value
+        if the coordinator doesn't currently have one."""
+        value = self._live_native_value()
+        if value is not None:
+            return value
+        if is_restored_value_fresh(
+            self._restored_last_fetch, self.coordinator.update_interval
+        ):
+            return self._restored_native_value
+        return None

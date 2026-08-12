@@ -20,11 +20,14 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt_util
 
 from . import LKSystemCoordinator
 from .const import DOMAIN, INTEGRATION_NAME
-from .restore import ATTR_LAST_SUCCESSFUL_FETCH, is_restored_value_fresh
+from .restore import (
+    is_restored_value_fresh,
+    last_successful_fetch_attributes,
+    parse_restored_last_fetch,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -177,9 +180,7 @@ class LKThermostat(CoordinatorEntity, RestoreEntity, ClimateEntity):
         self._restored_target_temperature = last_state.attributes.get(
             ATTR_TEMPERATURE
         )
-        last_fetch = last_state.attributes.get(ATTR_LAST_SUCCESSFUL_FETCH)
-        if last_fetch:
-            self._restored_last_fetch = dt_util.parse_datetime(last_fetch)
+        self._restored_last_fetch = parse_restored_last_fetch(last_state)
 
     def _is_restore_fresh(self) -> bool:
         return is_restored_value_fresh(
@@ -306,11 +307,7 @@ class LKThermostat(CoordinatorEntity, RestoreEntity, ClimateEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Expose the last-successful-fetch timestamp."""
-        if self.coordinator.last_successful_fetch is None:
-            return {}
-        return {
-            ATTR_LAST_SUCCESSFUL_FETCH: self.coordinator.last_successful_fetch.isoformat()
-        }
+        return last_successful_fetch_attributes(self.coordinator.last_successful_fetch)
     
     async def async_set_temperature(self, **kwargs) -> None:
         """Set new target temperature."""
