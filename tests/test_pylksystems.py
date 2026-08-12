@@ -8,6 +8,7 @@ merge/dedupe, error handling) without ever hitting the real LK Systems API.
 from __future__ import annotations
 
 import logging
+from unittest.mock import AsyncMock, patch
 
 from aiohttp import ClientConnectionError
 from aioresponses import aioresponses
@@ -366,3 +367,106 @@ class TestClientSessionTimeout:
 
         assert timeout.total is not None
         assert timeout.total <= 30
+
+
+class TestRateLimitBackoff:
+    """LK's cloud API rate-limits (429) during bursts of activity - this is
+    an expected, routine condition on LK's end, not a genuine error. The
+    client should retry with backoff (honoring Retry-After when present)
+    instead of failing immediately, and log at warning rather than error.
+    """
+
+    async def test_429_is_retried_and_eventually_succeeds(self, manager):
+        url = BASE_URL + "service/cubic/secure/cubic-1/measurement/0"
+
+        with aioresponses() as m:
+            m.get(url, status=429, headers={"Retry-After": "1"})
+            m.get(url, payload={"flow": 0.0}, status=200)
+            with patch("asyncio.sleep", new=AsyncMock()):
+                async with manager:
+                    result = await manager.get_cubic_secure_measurement("cubic-1")
+
+        assert result is True
+        assert manager.cubic_secure_messurement == {"flow": 0.0}
+
+    async def test_429_honors_retry_after_header(self, manager):
+        url = BASE_URL + "service/cubic/secure/cubic-1/measurement/0"
+
+        with aioresponses() as m:
+            m.get(url, status=429, headers={"Retry-After": "7"})
+            m.get(url, payload={"flow": 0.0}, status=200)
+            with patch("asyncio.sleep", new=AsyncMock()) as mock_sleep:
+                async with manager:
+                    await manager.get_cubic_secure_measurement("cubic-1")
+
+        mock_sleep.assert_awaited_once_with(7.0)
+
+    async def test_429_without_retry_after_uses_a_default_backoff(self, manager):
+        url = BASE_URL + "service/cubic/secure/cubic-1/measurement/0"
+
+        with aioresponses() as m:
+            m.get(url, status=429)
+            m.get(url, payload={"flow": 0.0}, status=200)
+            with patch("asyncio.sleep", new=AsyncMock()) as mock_sleep:
+                async with manager:
+                    await manager.get_cubic_secure_measurement("cubic-1")
+
+        mock_sleep.assert_awaited_once()
+        assert mock_sleep.await_args.args[0] > 0
+
+    async def test_429_exhausting_retries_returns_false(self, manager):
+        manager.userid = "user-123"
+        url = BASE_URL + "service/users/user/user-123/structure/1"
+
+        with aioresponses() as m:
+            m.get(url, status=429, repeat=True)
+            with patch("asyncio.sleep", new=AsyncMock()):
+                async with manager:
+                    result = await manager.get_user_structure()
+
+        assert result is False
+        assert manager.user_structure is None
+
+    async def test_429_exhausting_retries_logs_warning_not_error(self, manager, caplog):
+        manager.userid = "user-123"
+        url = BASE_URL + "service/users/user/user-123/structure/1"
+
+        with aioresponses() as m:
+            m.get(url, status=429, repeat=True)
+            with patch("asyncio.sleep", new=AsyncMock()):
+                with caplog.at_level(logging.WARNING):
+                    async with manager:
+                        await manager.get_user_structure()
+
+        assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+        assert "429" in caplog.text
+
+    async def test_post_429_is_retried_and_eventually_succeeds(self, manager):
+        # cubic_secure_close_valve() goes through the _post() helper (unlike
+        # set_device_temperature(), which makes its own raw session.post()
+        # call and isn't covered by this retry loop).
+        url = BASE_URL + "control/cubic/secure/cubic-1/valve/close"
+
+        with aioresponses() as m:
+            m.post(url, status=429, headers={"Retry-After": "1"})
+            m.post(url, payload={}, status=200)
+            with patch("asyncio.sleep", new=AsyncMock()):
+                async with manager:
+                    result = await manager.cubic_secure_close_valve("cubic-1")
+
+        assert result is True
+
+    async def test_other_error_statuses_still_log_at_error(self, manager, caplog):
+        """Non-429 failures aren't rate-limiting - they keep the existing
+        error-level logging, unaffected by the 429 backoff path."""
+        manager.userid = "user-123"
+        url = BASE_URL + "service/users/user/user-123/structure/1"
+
+        with aioresponses() as m:
+            m.get(url, status=500)
+            with caplog.at_level(logging.ERROR):
+                async with manager:
+                    result = await manager.get_user_structure()
+
+        assert result is False
+        assert any(record.levelno >= logging.ERROR for record in caplog.records)

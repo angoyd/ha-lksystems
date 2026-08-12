@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from datetime import datetime, timedelta
 import json
@@ -32,6 +33,27 @@ def _redact_headers(headers: dict) -> dict:
 # slow/unresponsive LK API call stall an entire coordinator update for up to
 # 5 minutes before it even fails - fail fast instead.
 REQUEST_TIMEOUT = ClientTimeout(total=20)
+
+# LK's cloud API rate-limiting (429) during a burst of activity is routine,
+# not a genuine error - retry with backoff rather than failing immediately.
+RATE_LIMIT_STATUS = 429
+RATE_LIMIT_MAX_RETRIES = 3
+RATE_LIMIT_DEFAULT_BACKOFF = 5.0  # seconds, used when no Retry-After header
+
+
+def _rate_limit_backoff(response) -> float:
+    """Return the delay to wait before retrying a 429 response.
+
+    Honors the Retry-After header (seconds) when LK's API provides one,
+    falling back to a default backoff otherwise.
+    """
+    retry_after = response.headers.get("Retry-After")
+    if retry_after is not None:
+        try:
+            return float(retry_after)
+        except ValueError:
+            pass
+    return RATE_LIMIT_DEFAULT_BACKOFF
 
 
 # Add the missing LKSystemsError class
@@ -108,6 +130,21 @@ class LKSystemsManager:
 
     async def handle_client_error(self, endpoint, headers, error):
         """Handle ClientError and log relevant information."""
+        if (
+            isinstance(error, ClientResponseError)
+            and error.status == RATE_LIMIT_STATUS
+        ):
+            # Routine, expected condition on LK's end, not a genuine error -
+            # log at warning rather than error. Callers going through
+            # _get()/_post() have already retried with backoff by the time
+            # this fires; other call sites that make their own raw request
+            # (e.g. set_device_temperature()) land here on the first 429.
+            _LOGGER.warning(
+                "Rate limited (429) by LK Systems API. URL: %s",
+                self.base_url + endpoint,
+            )
+            return False
+
         _LOGGER.error(
             "An error occurred during the request. URL: %s, Headers: %s. Error: %s",
             self.base_url + endpoint,
@@ -130,60 +167,98 @@ class LKSystemsManager:
     async def _get(self, endpoint):
         """Helper method to perform GET requests."""
         headers = {}
-        try:
-            # Define headers with the JwtToken
-            headers = {
-                **self._get_headers(),
-                "authorization": f"Bearer {self.jwt_token}",
-            }
+        attempt = 0
+        while True:
+            try:
+                # Define headers with the JwtToken
+                headers = {
+                    **self._get_headers(),
+                    "authorization": f"Bearer {self.jwt_token}",
+                }
 
-            async with self.session.get(
-                self.base_url + endpoint, headers=headers
-            ) as response:
-                response.raise_for_status()
-                if response.status == 200:
-                    res = await response.json()
+                async with self.session.get(
+                    self.base_url + endpoint, headers=headers
+                ) as response:
+                    if (
+                        response.status == RATE_LIMIT_STATUS
+                        and attempt < RATE_LIMIT_MAX_RETRIES
+                    ):
+                        delay = _rate_limit_backoff(response)
+                        _LOGGER.warning(
+                            "Rate limited (429) by LK Systems API, retrying %s in "
+                            "%.1fs (attempt %d/%d)",
+                            self.base_url + endpoint,
+                            delay,
+                            attempt + 1,
+                            RATE_LIMIT_MAX_RETRIES,
+                        )
+                        await asyncio.sleep(delay)
+                        attempt += 1
+                        continue
 
-                    return True, res
+                    response.raise_for_status()
+                    if response.status == 200:
+                        res = await response.json()
 
-                _LOGGER.error(
-                    "Obtaining data from URL %s failed with status code %d",
-                    self.base_url + endpoint,
-                    response.status,
-                )
-                return False, None
+                        return True, res
 
-        except (ClientResponseError, ClientError) as error:
-            return (await self.handle_client_error(endpoint, headers, error)), None
+                    _LOGGER.error(
+                        "Obtaining data from URL %s failed with status code %d",
+                        self.base_url + endpoint,
+                        response.status,
+                    )
+                    return False, None
+
+            except (ClientResponseError, ClientError) as error:
+                return (await self.handle_client_error(endpoint, headers, error)), None
 
     async def _post(self, endpoint, payload):
         """Helper method to perform POST requests."""
         headers = {}
-        try:
-            # Define headers with the JwtToken
-            headers = {
-                **self._get_headers(),
-                "authorization": f"Bearer {self.jwt_token}",
-            }
+        attempt = 0
+        while True:
+            try:
+                # Define headers with the JwtToken
+                headers = {
+                    **self._get_headers(),
+                    "authorization": f"Bearer {self.jwt_token}",
+                }
 
-            async with self.session.post(
-                self.base_url + endpoint, json=payload, headers=headers
-            ) as response:
-                response.raise_for_status()
-                if response.status in [200, 201]:
-                    res = await response.json(content_type=None)
+                async with self.session.post(
+                    self.base_url + endpoint, json=payload, headers=headers
+                ) as response:
+                    if (
+                        response.status == RATE_LIMIT_STATUS
+                        and attempt < RATE_LIMIT_MAX_RETRIES
+                    ):
+                        delay = _rate_limit_backoff(response)
+                        _LOGGER.warning(
+                            "Rate limited (429) by LK Systems API, retrying %s in "
+                            "%.1fs (attempt %d/%d)",
+                            self.base_url + endpoint,
+                            delay,
+                            attempt + 1,
+                            RATE_LIMIT_MAX_RETRIES,
+                        )
+                        await asyncio.sleep(delay)
+                        attempt += 1
+                        continue
 
-                    return True, res
+                    response.raise_for_status()
+                    if response.status in [200, 201]:
+                        res = await response.json(content_type=None)
 
-                _LOGGER.error(
-                    "Posting data to URL %s failed with status code %d",
-                    self.base_url + endpoint,
-                    response.status,
-                )
-                return False, None
+                        return True, res
 
-        except (ClientResponseError, ClientError) as error:
-            return (await self.handle_client_error(endpoint, headers, error)), None
+                    _LOGGER.error(
+                        "Posting data to URL %s failed with status code %d",
+                        self.base_url + endpoint,
+                        response.status,
+                    )
+                    return False, None
+
+            except (ClientResponseError, ClientError) as error:
+                return (await self.handle_client_error(endpoint, headers, error)), None
 
     async def login(self):
         """Login to LK systems and get userId"""
