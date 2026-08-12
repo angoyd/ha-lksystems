@@ -1,35 +1,19 @@
 """Tests for diagnostics.py.
 
 Exercises async_get_config_entry_diagnostics() directly against a real
-config-entry setup (see test_integration_setup.py's _setup_entry pattern),
-so the redaction runs over the same coordinator.data shape HA would.
+config-entry setup, so the redaction runs over the same coordinator.data
+shape HA would.
 """
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.lksystems.const import DOMAIN
 from custom_components.lksystems.diagnostics import (
     async_get_config_entry_diagnostics,
 )
 
-from .conftest import CUBIC_IDENTITY, THERMOSTAT_MAC
-
-
-async def _setup_entry(hass, manager) -> MockConfigEntry:
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={CONF_USERNAME: "user@example.com", CONF_PASSWORD: "hunter2"},
-    )
-    entry.add_to_hass(hass)
-    with patch("custom_components.lksystems.LKSystemsManager", return_value=manager):
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
-    return entry
+from .conftest import CUBIC_IDENTITY, THERMOSTAT_MAC, setup_entry as _setup_entry
 
 
 async def test_diagnostics_redacts_credentials(hass, fake_manager):
@@ -65,10 +49,6 @@ async def test_diagnostics_redacts_device_mac_addresses(hass, fake_manager):
 
 
 async def test_diagnostics_keeps_device_identities_for_debugging(hass, fake_manager):
-    """Device identities aren't redacted: unlike a MAC address they aren't
-    a hardware fingerprint, and they're the only way to correlate devices
-    across the nested structure when debugging (e.g. issue #29's multiple
-    Cubic Secure devices)."""
     entry = await _setup_entry(hass, fake_manager)
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
