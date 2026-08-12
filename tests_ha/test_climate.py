@@ -1,4 +1,4 @@
-"""Tests for climate.py's restore-last-known-state behavior (issue #54).
+"""Tests for climate.py's restore-last-known-state behavior.
 
 See test_sensor.py's module docstring for the general testing pattern -
 climate has no RestoreSensor equivalent, so LKThermostat uses plain

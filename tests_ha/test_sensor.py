@@ -1,4 +1,4 @@
-"""Tests for sensor.py's restore-last-known-state behavior (issue #54).
+"""Tests for sensor.py's restore-last-known-state behavior.
 
 Entities are exercised somewhat directly rather than through a full
 config-entry setup + simulated process restart: a real coordinator is set
@@ -61,7 +61,7 @@ async def _restored_firmware_version_entity(hass, fake_manager, fetched_at):
     """A firmwareVersion sensor added fresh, as if right after an HA
     restart, with a restore cache seeded from before that restart and the
     live cubic_configuration payload missing (a fetch failure on the very
-    first poll - the scenario issue #54 is about)."""
+    first poll)."""
     entity_id = "sensor.test_restore_firmware_version"
     # Deliberately distinct from conftest's live firmwareVersion ("1.2.3")
     # so a pass unambiguously means the restored path, not a coincidence.
@@ -202,11 +202,11 @@ def _hub_device(coordinator) -> dict:
 
 
 class TestArcHubRestore:
-    """The hub's own "Status" sensor never actually gets live data (issue
-    #46 - the coordinator never stores a measurement/connectionState for
-    the arc-hub device itself, only its children), so unlike the other
-    restore tests there's no live data to clear first - native_value is
-    already unconditionally None going in."""
+    """The hub's own "Status" sensor never actually gets live data - the
+    coordinator never stores a measurement/connectionState for the arc-hub
+    device itself, only its children - so unlike the other restore tests
+    there's no live data to clear first - native_value is already
+    unconditionally None going in."""
 
     async def test_restores_value_when_fresh(self, hass, fake_manager):
         entity_id = "sensor.test_restore_hub_status"

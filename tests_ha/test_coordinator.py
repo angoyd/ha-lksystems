@@ -113,9 +113,9 @@ class TestCoordinatorConstruction:
 
 
 class TestLastSuccessfulFetch:
-    """Restoring entity state across a restart (issue #54) needs a
-    per-update timestamp to judge whether a restored value is still fresh
-    enough to show - see restore.py."""
+    """Restoring entity state across a restart needs a per-update
+    timestamp to judge whether a restored value is still fresh enough to
+    show."""
 
     async def test_successful_update_sets_the_timestamp(self, hass, fake_manager):
         entry = _make_entry(hass)

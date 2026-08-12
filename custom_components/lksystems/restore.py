@@ -1,4 +1,4 @@
-"""Restore-last-known-state helpers shared by every entity (issue #54).
+"""Restore-last-known-state helpers shared by every entity.
 
 Every entity restores its last value uniformly across a Home Assistant
 restart. The coordinator's own in-memory fallback (see __init__.py's
