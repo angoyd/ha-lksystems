@@ -2,8 +2,7 @@
 
 LKThermostat is the sole entity on its device, so it follows Home
 Assistant's convention for a device's primary entity: has_entity_name=True
-with name=None, so the entity's displayed name is just the device name
-(issue #49).
+with name=None, so the entity's displayed name is just the device name.
 """
 
 from __future__ import annotations

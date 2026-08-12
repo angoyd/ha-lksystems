@@ -28,7 +28,7 @@ def _device_name(hass, identity: str) -> str:
 class TestArcSensorHasEntityName:
     """Only AbstractLkCubicSensor set has_entity_name - the Arc sensor/hub
     classes baked the device's own name into each entity's full name
-    string instead (issue #49)."""
+    string instead."""
 
     async def test_temperature_sensor_has_entity_name(self, hass, fake_manager):
         await setup_entry(hass, fake_manager)
