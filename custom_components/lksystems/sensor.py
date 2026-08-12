@@ -379,7 +379,7 @@ async def async_setup_entry(
                                 SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
                                 # Signal-strength diagnostics, not a reading
                                 # most users watch day-to-day - the textbook
-                                # HA case for opt-in-only (issue #57).
+                                # HA case for opt-in-only.
                                 entity_registry_enabled_default=False,
                             )
                         )

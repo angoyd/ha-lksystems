@@ -38,8 +38,8 @@ async def test_thermostat_entity_reflects_client_data(hass, fake_manager):
 
 
 async def test_standalone_sensor_entities_reflect_client_data(hass, fake_manager):
-    """RSSI is excluded here - it's disabled by default (issue #57), so it
-    has no live state to assert on; see test_sensor.py for that."""
+    """RSSI is excluded here - it's disabled by default, so it has no live
+    state to assert on; see test_sensor.py for that."""
     await _setup_entry(hass, fake_manager)
 
     temperature_id = _entity_id(

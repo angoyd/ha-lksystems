@@ -1,4 +1,4 @@
-"""Tests for sensor.py's entity-registry defaults (issue #57).
+"""Tests for sensor.py's entity-registry defaults.
 
 Several sensors are diagnostic/low-value enough that they shouldn't clutter
 the main device card by default - drives a real config-entry setup (like
