@@ -14,7 +14,7 @@ from .const import DOMAIN
 # Device "identity"/serial_number fields are deliberately not redacted:
 # unlike a MAC address they're not a hardware fingerprint, and they're the
 # only way to correlate devices across the nested coordinator data when
-# debugging a report (e.g. issue #29's multiple Cubic Secure devices).
+# debugging a report from an account with multiple Cubic Secure devices.
 TO_REDACT = {
     CONF_USERNAME,
     CONF_PASSWORD,
