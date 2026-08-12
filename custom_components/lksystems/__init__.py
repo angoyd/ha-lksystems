@@ -448,9 +448,6 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                     "country": lk_inst.user_structure["country"],
                     "ownerId": lk_inst.user_structure["ownerId"],
                     "cacheUpdated": lk_inst.user_structure["cacheUpdated"],
-                    # Keyed by device identity so multiple Cubic Secure
-                    # devices on the same account don't overwrite each
-                    # other's machine_info/last_measurement/configuration.
                     "cubic_devices": {},
                     "devices": [],
                     "device_details": {},  # Will store detailed information about each device
@@ -577,9 +574,6 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                             machine.get("deviceType") == "cubicsecure"
                             and machine.get("deviceRole") == "cubicsecure"
                         ):
-                            # Keyed by device_identity: multiple Cubic Secure
-                            # devices on the same account each get their own
-                            # entry instead of overwriting a shared one.
                             resp["cubic_devices"][device_identity] = {
                                 "machine_info": machine
                             }
