@@ -105,6 +105,7 @@ class LKThermostat(CoordinatorEntity, ClimateEntity):
     _attr_min_temp = 5.0
     _attr_max_temp = 30.0
     _attr_target_temperature_step = 0.5
+    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -132,13 +133,9 @@ class LKThermostat(CoordinatorEntity, ClimateEntity):
         # Create unique ID
         self._attr_unique_id = f"{DOMAIN}_{device_identity}_thermostat"
 
-        # has_entity_name: the thermostat is the only entity on its
-        # device, so per HA convention for a device's sole/primary entity,
-        # its own name is left unset - the displayed name is just the
-        # device name below. The device name has no entity-type suffix,
-        # matching the device-naming convention sensor.py's Arc entities
-        # use for this same physical device.
-        self._attr_has_entity_name = True
+        # The thermostat is the only entity on its device, so per HA
+        # convention for a device's sole/primary entity, its own name is
+        # left unset - the displayed name is just the device name below.
         self._attr_name = None
 
         # Set up device info
