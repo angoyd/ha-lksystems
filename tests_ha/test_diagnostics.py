@@ -73,7 +73,7 @@ async def test_diagnostics_keeps_device_identities_for_debugging(hass, fake_mana
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
 
-    assert CUBIC_IDENTITY in diagnostics["coordinator_data"]["cubic_devices"]
-    assert diagnostics["coordinator_data"]["cubic_devices"][CUBIC_IDENTITY][
-        "machine_info"
-    ]["identity"] == CUBIC_IDENTITY
+    assert (
+        diagnostics["coordinator_data"]["cubic_machine_info"]["identity"]
+        == CUBIC_IDENTITY
+    )
