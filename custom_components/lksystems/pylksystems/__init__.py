@@ -216,8 +216,9 @@ class LKSystemsManager:
                         )
                         return False, None
 
-                # Outside the `async with` - the connection is released
-                # before waiting out the backoff, not held open for it.
+                # Deliberately kept outside the `async with` above - moving
+                # it back in would hold the connection open for the whole
+                # backoff instead of releasing it first.
                 await self._sleep_before_retry(endpoint, delay, attempt)
                 attempt += 1
 
