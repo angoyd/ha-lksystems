@@ -40,7 +40,6 @@ async def test_low_value_sensors_are_disabled_by_default(hass, fake_manager):
         "tempWaterMin",
         "tempWaterMax",
         "cacheUpdated",
-        "lastStatus",
         "leak.meanFlow",
         "leak.dateStartedAt",
         "leak.dateUpdatedAt",
@@ -53,6 +52,12 @@ async def test_low_value_sensors_are_disabled_by_default(hass, fake_manager):
 async def test_safety_and_primary_sensors_stay_enabled_by_default(
     hass, fake_manager
 ):
+    """lastStatus ("Last Data Sent") is device-freshness information, not
+    low-value: it's the only signal that the device itself has gone quiet,
+    as distinct from last_successful_cloud_fetch (an attribute on every
+    cubic sensor), which only says the integration's own poll of LK's cloud
+    API succeeded - LK's cloud can keep serving a stale cached reading
+    successfully long after the device itself stopped reporting to it."""
     await setup_entry(hass, fake_manager)
 
     temperature_entry = _registry_entry(
@@ -60,7 +65,13 @@ async def test_safety_and_primary_sensors_stay_enabled_by_default(
     )
     assert temperature_entry.disabled_by is None
 
-    for key in ("volumeTotal", "tempWaterAverage", "waterPressure", "leak.leakState"):
+    for key in (
+        "volumeTotal",
+        "tempWaterAverage",
+        "waterPressure",
+        "leak.leakState",
+        "lastStatus",
+    ):
         entry = _registry_entry(hass, "sensor", f"LkUid_{key}_{CUBIC_IDENTITY}")
         assert entry.disabled_by is None, key
 

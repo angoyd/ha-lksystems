@@ -111,7 +111,6 @@ LK_CUBICSECURE_SENSORS: dict[str, SensorEntityDescription] = {
         native_unit_of_measurement=None,
         state_class=None,
         translation_key="last_status_sensor",
-        entity_registry_enabled_default=False,
     ),
     "cacheUpdated": SensorEntityDescription(
         key="cacheUpdated",
