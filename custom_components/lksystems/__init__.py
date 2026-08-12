@@ -211,9 +211,9 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         self._update_interval_minutes = update_interval_minutes
         self._entry = entry
         self._cubic_identity = None
-        self._last_update_time = dt_util.now()
+        self._last_cloud_fetch_attempt = dt_util.now()
         self._entry_id = entry.entry_id
-        self.last_successful_fetch: datetime | None = None
+        self.last_successful_cloud_fetch: datetime | None = None
 
         # Initialize coordinator with update interval
         super().__init__(
@@ -381,9 +381,10 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
     async def _async_update_data(self) -> LkStructureResp:  # noqa: C901
         """Fetch the latest data from the source."""
         # Record update time at the beginning of update
-        self._last_update_time = dt_util.now()
+        self._last_cloud_fetch_attempt = dt_util.now()
         _LOGGER.info(
-            "Starting LK Systems data update at %s", self._last_update_time.isoformat()
+            "Starting LK Systems data update at %s",
+            self._last_cloud_fetch_attempt.isoformat(),
         )
 
         try:
@@ -454,9 +455,9 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                     "cubic_last_messurement": None,
                     "devices": [],
                     "device_details": {},  # Will store detailed information about each device
-                    "update_time": self._last_update_time.isoformat(),
+                    "update_time": self._last_cloud_fetch_attempt.isoformat(),
                     "next_update_time": (
-                        self._last_update_time + self.update_interval
+                        self._last_cloud_fetch_attempt + self.update_interval
                     ).isoformat(),
                 }
 
@@ -775,7 +776,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                     resp["next_update_time"],
                 )
 
-                self.last_successful_fetch = dt_util.utcnow()
+                self.last_successful_cloud_fetch = dt_util.utcnow()
                 return resp
 
         except InvalidAuth as err:

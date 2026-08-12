@@ -25,8 +25,8 @@ from . import LKSystemCoordinator
 from .const import DOMAIN, INTEGRATION_NAME
 from .restore import (
     is_restored_value_fresh,
-    last_successful_fetch_attributes,
-    parse_restored_last_fetch,
+    last_successful_cloud_fetch_attributes,
+    parse_restored_last_cloud_fetch,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -164,7 +164,7 @@ class LKThermostat(CoordinatorEntity, RestoreEntity, ClimateEntity):
 
         self._restored_current_temperature = None
         self._restored_target_temperature = None
-        self._restored_last_fetch = None
+        self._restored_last_cloud_fetch = None
 
     async def async_added_to_hass(self) -> None:
         """Restore the last-known temperatures across an HA restart."""
@@ -180,11 +180,11 @@ class LKThermostat(CoordinatorEntity, RestoreEntity, ClimateEntity):
         self._restored_target_temperature = last_state.attributes.get(
             ATTR_TEMPERATURE
         )
-        self._restored_last_fetch = parse_restored_last_fetch(last_state)
+        self._restored_last_cloud_fetch = parse_restored_last_cloud_fetch(last_state)
 
     def _is_restore_fresh(self) -> bool:
         return is_restored_value_fresh(
-            self._restored_last_fetch, self.coordinator.update_interval
+            self._restored_last_cloud_fetch, self.coordinator.update_interval
         )
 
     @property
@@ -306,8 +306,10 @@ class LKThermostat(CoordinatorEntity, RestoreEntity, ClimateEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose the last-successful-fetch timestamp."""
-        return last_successful_fetch_attributes(self.coordinator.last_successful_fetch)
+        """Expose the last-successful-cloud-fetch timestamp."""
+        return last_successful_cloud_fetch_attributes(
+            self.coordinator.last_successful_cloud_fetch
+        )
     
     async def async_set_temperature(self, **kwargs) -> None:
         """Set new target temperature."""

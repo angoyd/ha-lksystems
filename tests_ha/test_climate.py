@@ -18,7 +18,7 @@ from pytest_homeassistant_custom_component.common import mock_restore_cache
 
 from custom_components.lksystems.climate import LKThermostat
 from custom_components.lksystems.const import DOMAIN
-from custom_components.lksystems.restore import ATTR_LAST_SUCCESSFUL_FETCH
+from custom_components.lksystems.restore import ATTR_LAST_SUCCESSFUL_CLOUD_FETCH
 
 from .conftest import THERMOSTAT_MAC, setup_entry as _setup_entry
 
@@ -35,7 +35,7 @@ def _seed_restore_cache(
                 {
                     ATTR_CURRENT_TEMPERATURE: current_temperature,
                     ATTR_TEMPERATURE: target_temperature,
-                    ATTR_LAST_SUCCESSFUL_FETCH: fetched_at.isoformat(),
+                    ATTR_LAST_SUCCESSFUL_CLOUD_FETCH: fetched_at.isoformat(),
                 },
             )
         ],

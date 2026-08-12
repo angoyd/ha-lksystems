@@ -39,7 +39,7 @@ from .const import (
     LK_CUBICSECURE_CONFIG_SENSORS,
     MANUFACTURER,
 )
-from .restore import RestoredNativeValueMixin, last_successful_fetch_attributes
+from .restore import RestoredNativeValueMixin, last_successful_cloud_fetch_attributes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -694,24 +694,31 @@ class LKArcSensorEntity(RestoredNativeValueMixin, CoordinatorEntity, RestoreSens
             )
 
         # Add last update time
-        if self.coordinator and hasattr(self.coordinator, "_last_update_time"):
-            attrs["last_updated"] = self.coordinator._last_update_time.isoformat()
+        if self.coordinator and hasattr(self.coordinator, "_last_cloud_fetch_attempt"):
+            attrs["last_cloud_fetch_attempt"] = (
+                self.coordinator._last_cloud_fetch_attempt.isoformat()
+            )
 
         # Add next scheduled update time
         if (
             self.coordinator
             and hasattr(self.coordinator, "update_interval")
-            and hasattr(self.coordinator, "_last_update_time")
+            and hasattr(self.coordinator, "_last_cloud_fetch_attempt")
         ):
-            next_update = (
-                self.coordinator._last_update_time + self.coordinator.update_interval
+            next_cloud_fetch_attempt = (
+                self.coordinator._last_cloud_fetch_attempt
+                + self.coordinator.update_interval
             )
-            attrs["next_update"] = next_update.isoformat()
+            attrs["next_cloud_fetch_attempt"] = next_cloud_fetch_attempt.isoformat()
 
         # Add refresh button attribute with a timestamp to force UI refresh
         attrs["refresh_timestamp"] = dt_util.now().timestamp()
 
-        attrs.update(last_successful_fetch_attributes(self.coordinator.last_successful_fetch))
+        attrs.update(
+            last_successful_cloud_fetch_attributes(
+                self.coordinator.last_successful_cloud_fetch
+            )
+        )
 
         return attrs
 
@@ -848,8 +855,10 @@ class LKArcHubEntity(RestoredNativeValueMixin, CoordinatorEntity, RestoreSensor)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose the last-successful-fetch timestamp."""
-        return last_successful_fetch_attributes(self.coordinator.last_successful_fetch)
+        """Expose the last-successful-cloud-fetch timestamp."""
+        return last_successful_cloud_fetch_attributes(
+            self.coordinator.last_successful_cloud_fetch
+        )
 
 
 class AbstractLkCubicSensor(
@@ -917,7 +926,7 @@ class LKCubicSensor(AbstractLkCubicSensor):
             self._attr_extra_state_attributes.update(
                 {C_NEXT_UPDATE_TIME: self._coordinator.data["next_update_time"]}
             )
-        self._update_last_successful_fetch_attribute()
+        self._update_last_successful_cloud_fetch_attribute()
         self._attr_available = False
 
     async def async_update(self) -> None:
@@ -935,12 +944,14 @@ class LKCubicSensor(AbstractLkCubicSensor):
             self._attr_extra_state_attributes.update(
                 {C_NEXT_UPDATE_TIME: self._coordinator.data["next_update_time"]}
             )
-        self._update_last_successful_fetch_attribute()
+        self._update_last_successful_cloud_fetch_attribute()
         super()._handle_coordinator_update()
 
-    def _update_last_successful_fetch_attribute(self) -> None:
+    def _update_last_successful_cloud_fetch_attribute(self) -> None:
         self._attr_extra_state_attributes.update(
-            last_successful_fetch_attributes(self.coordinator.last_successful_fetch)
+            last_successful_cloud_fetch_attributes(
+                self.coordinator.last_successful_cloud_fetch
+            )
         )
 
     def _live_native_value(self) -> Any | None:

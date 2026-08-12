@@ -24,7 +24,7 @@ from custom_components.lksystems.const import (
     DOMAIN,
     LK_CUBICSECURE_CONFIG_SENSORS,
 )
-from custom_components.lksystems.restore import ATTR_LAST_SUCCESSFUL_FETCH
+from custom_components.lksystems.restore import ATTR_LAST_SUCCESSFUL_CLOUD_FETCH
 from custom_components.lksystems.sensor import (
     LKArcHubEntity,
     LKArcSensorEntity,
@@ -49,7 +49,7 @@ def _seed_restore_cache(hass, entity_id: str, native_value, fetched_at) -> None:
                 State(
                     entity_id,
                     str(native_value),
-                    {ATTR_LAST_SUCCESSFUL_FETCH: fetched_at.isoformat()},
+                    {ATTR_LAST_SUCCESSFUL_CLOUD_FETCH: fetched_at.isoformat()},
                 ),
                 {"native_value": native_value, "native_unit_of_measurement": None},
             )
