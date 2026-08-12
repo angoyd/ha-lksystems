@@ -9,34 +9,18 @@ the restored State's attributes instead of a typed native_value.
 from __future__ import annotations
 
 from datetime import timedelta
-from unittest.mock import patch
 
 from homeassistant.components.climate import ATTR_CURRENT_TEMPERATURE
-from homeassistant.const import ATTR_TEMPERATURE, CONF_PASSWORD, CONF_USERNAME
+from homeassistant.const import ATTR_TEMPERATURE
 from homeassistant.core import State
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import (
-    MockConfigEntry,
-    mock_restore_cache,
-)
+from pytest_homeassistant_custom_component.common import mock_restore_cache
 
 from custom_components.lksystems.climate import LKThermostat
 from custom_components.lksystems.const import DOMAIN
 from custom_components.lksystems.restore import ATTR_LAST_SUCCESSFUL_FETCH
 
-from .conftest import THERMOSTAT_MAC
-
-
-async def _setup_entry(hass, manager) -> MockConfigEntry:
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={CONF_USERNAME: "user@example.com", CONF_PASSWORD: "hunter2"},
-    )
-    entry.add_to_hass(hass)
-    with patch("custom_components.lksystems.LKSystemsManager", return_value=manager):
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
-    return entry
+from .conftest import THERMOSTAT_MAC, setup_entry as _setup_entry
 
 
 def _seed_restore_cache(

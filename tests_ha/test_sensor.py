@@ -13,13 +13,10 @@ process restart.
 from __future__ import annotations
 
 from datetime import timedelta
-from unittest.mock import patch
 
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import State
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
-    MockConfigEntry,
     mock_restore_cache_with_extra_data,
 )
 
@@ -34,19 +31,7 @@ from custom_components.lksystems.sensor import (
     LKCubicSensor,
 )
 
-from .conftest import HUB_IDENTITY, THERMOSTAT_MAC
-
-
-async def _setup_entry(hass, manager) -> MockConfigEntry:
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={CONF_USERNAME: "user@example.com", CONF_PASSWORD: "hunter2"},
-    )
-    entry.add_to_hass(hass)
-    with patch("custom_components.lksystems.LKSystemsManager", return_value=manager):
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
-    return entry
+from .conftest import HUB_IDENTITY, THERMOSTAT_MAC, setup_entry as _setup_entry
 
 
 def _seed_restore_cache(hass, entity_id: str, native_value, fetched_at) -> None:
