@@ -101,7 +101,7 @@ LK_CUBICSECURE_SENSORS: dict[str, SensorEntityDescription] = {
     ),
     "lastStatus": SensorEntityDescription(
         key="lastStatus",
-        name="Last Status",
+        name="Last Data Sent",
         icon="mdi:information-outline",
         device_class=SensorDeviceClass.TIMESTAMP,
         unit_of_measurement=None,
