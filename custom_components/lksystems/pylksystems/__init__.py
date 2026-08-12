@@ -39,7 +39,7 @@ REQUEST_TIMEOUT = ClientTimeout(total=20)
 RATE_LIMIT_STATUS = 429
 RATE_LIMIT_MAX_RETRIES = 3
 RATE_LIMIT_DEFAULT_BACKOFF = 5.0  # seconds, used when no Retry-After header
-RATE_LIMIT_MIN_BACKOFF = 1.0  # floor, in case Retry-After is 0 or tiny
+RATE_LIMIT_MIN_BACKOFF = 1.0  # seconds; see _rate_limit_backoff() for why
 
 
 def _rate_limit_backoff(response) -> float:
