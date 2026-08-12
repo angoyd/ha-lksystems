@@ -21,6 +21,9 @@ def async_register(
 
 async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
     """Get info for the system health info page."""
+    # HA's system_health API registers one callback per domain, not per
+    # config entry - with more than one LK Systems account configured, only
+    # this first one's health is ever reported.
     coordinator = next(iter(hass.data[DOMAIN].values()))
 
     return {
