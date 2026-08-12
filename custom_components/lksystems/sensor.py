@@ -434,20 +434,23 @@ class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
         # Set entity unique ID (must be consistent and unique)
         self._attr_unique_id = f"{DOMAIN}_{device_identity}_{entity_key}"
 
-        # Set entity name using friendly name if available
+        # has_entity_name: the entity's own name is just its suffix (e.g.
+        # "Temperature") - HA combines it with the device name below to
+        # build the displayed name, rather than this class baking the
+        # device name into its own _attr_name.
+        self._attr_has_entity_name = True
+        self._attr_name = name_suffix
+
         friendly_name = device_title.get("name")
         if friendly_name:
-            self._attr_name = f"{friendly_name} {name_suffix}"
+            device_name = friendly_name
         else:
             room_name = (
                 device_title.get("zone", {}).get("zoneName")
                 if device_title.get("zone")
                 else None
             )
-            if room_name:
-                self._attr_name = f"LK {room_name} {name_suffix}"
-            else:
-                self._attr_name = f"LK Sensor {name_suffix}"
+            device_name = f"LK {room_name}" if room_name else "LK Sensor"
 
         # Get zone info for naming
         zone_name = None
@@ -457,7 +460,7 @@ class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
         # Set up device info with proper connection to parent if available
         device_info = {
             "identifiers": {(DOMAIN, device_identity)},
-            "name": self._attr_name.replace(f" {name_suffix}", ""),
+            "name": device_name,
             "manufacturer": "LK Systems",
             "model": device_type,
         }
@@ -752,17 +755,18 @@ class LKArcHubEntity(CoordinatorEntity, SensorEntity):
         # Create unique ID using identity if available, otherwise mac
         self._attr_unique_id = f"{DOMAIN}_{device_identity}_{entity_key}"
 
-        # Set name - use device name if available
+        # has_entity_name: see LKArcSensorEntity.__init__ for why the
+        # device name is kept separate from the entity's own name.
+        self._attr_has_entity_name = True
+        self._attr_name = name_suffix
+
         friendly_name = device_title.get("name")
-        if friendly_name:
-            self._attr_name = f"{friendly_name} {name_suffix}"
-        else:
-            self._attr_name = f"LK ARC Hub {name_suffix}"
+        device_name = friendly_name if friendly_name else "LK ARC Hub"
 
         # Set up device info
         device_info = {
             "identifiers": {(DOMAIN, device_identity)},
-            "name": self._attr_name.replace(f" {name_suffix}", ""),
+            "name": device_name,
             "manufacturer": "LK Systems",
             "model": device_type,
             "sw_version": None,

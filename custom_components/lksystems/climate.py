@@ -131,14 +131,21 @@ class LKThermostat(CoordinatorEntity, ClimateEntity):
         
         # Create unique ID
         self._attr_unique_id = f"{DOMAIN}_{device_identity}_thermostat"
-        
-        # Set name
-        self._attr_name = f"LK {zone_name} Thermostat"
-        
+
+        # has_entity_name: the thermostat is the only entity on its
+        # device, so per HA convention for a device's sole/primary entity,
+        # its own name is left unset - the displayed name is just the
+        # device name below (also drops the redundant "Thermostat" suffix
+        # that used to be baked into both the entity and device name here,
+        # matching the device-naming convention sensor.py's Arc entities
+        # use for this same physical device).
+        self._attr_has_entity_name = True
+        self._attr_name = None
+
         # Set up device info
         device_info = {
             "identifiers": {(DOMAIN, device_identity)},
-            "name": self._attr_name,
+            "name": f"LK {zone_name}",
             "manufacturer": "LK Systems",
             "model": device_type,
             "sw_version": None,
