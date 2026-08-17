@@ -95,6 +95,12 @@ class FakeLKSystemsManager:
         self.hub_devices_by_hub: dict[str, dict] = {}
         self.cubic_measurement_data: dict | None = None
         self.cubic_configuration_data: dict | None = None
+        # Per-cubic-device overrides, keyed by device identity - takes
+        # precedence over the single cubic_measurement_data/
+        # cubic_configuration_data above when set for that identity, so
+        # single-device tests can keep using the simpler singular fields.
+        self.cubic_measurements_by_device: dict[str, dict] = {}
+        self.cubic_configurations_by_device: dict[str, dict] = {}
 
         # Configurable outcomes for each call, so tests can force failures.
         self.login_result = True
@@ -160,7 +166,9 @@ class FakeLKSystemsManager:
             ("get_cubic_secure_measurement", device_identity, force_update)
         )
         if self.get_cubic_secure_measurement_result:
-            self.cubic_secure_messurement = self.cubic_measurement_data
+            self.cubic_secure_messurement = self.cubic_measurements_by_device.get(
+                device_identity, self.cubic_measurement_data
+            )
         return self.get_cubic_secure_measurement_result
 
     async def get_cubic_secure_configuration(
@@ -170,7 +178,9 @@ class FakeLKSystemsManager:
             ("get_cubic_secure_configuration", device_identity, force_update)
         )
         if self.get_cubic_secure_configuration_result:
-            self.cubic_secure_configuration = self.cubic_configuration_data
+            self.cubic_secure_configuration = self.cubic_configurations_by_device.get(
+                device_identity, self.cubic_configuration_data
+            )
         return self.get_cubic_secure_configuration_result
 
     async def set_thermostat_temperature(self, device_id, temperature):
@@ -202,6 +212,7 @@ class FakeLKSystemsManager:
 # --- Sample device identities used across tests ---------------------------
 
 CUBIC_IDENTITY = "cubic-secure-1"
+CUBIC_IDENTITY_2 = "cubic-secure-2"
 THERMOSTAT_MAC = "AA:BB:CC:DD:EE:01"
 SENSOR_MAC = "AA:BB:CC:DD:EE:02"
 HUB_IDENTITY = "arc-hub-1"
@@ -259,6 +270,24 @@ def build_user_structure() -> dict:
     }
 
 
+def build_user_structure_with_two_cubic_devices() -> dict:
+    """Same as build_user_structure(), but with a second Cubic Secure
+    machine registered under the same property - two Cubic Secure devices
+    (e.g. "Kitchen" and "Garage") registered under one realestate.
+    """
+    structure = build_user_structure()
+    structure["realestateMachines"].append(
+        {
+            "identity": CUBIC_IDENTITY_2,
+            "deviceGroup": "cubic",
+            "deviceType": "cubicsecure",
+            "deviceRole": "cubicsecure",
+            "zone": {"zoneId": "zone-cubic-2", "zoneName": "Garage"},
+        }
+    )
+    return structure
+
+
 def build_measurements_by_device() -> dict:
     return {
         THERMOSTAT_MAC: {
@@ -306,11 +335,11 @@ def build_hub_devices_by_hub() -> dict:
     }
 
 
-def build_cubic_measurement() -> dict:
+def build_cubic_measurement(volume_total: int = 45000) -> dict:
     return {
         "cacheUpdated": int(time.time()),
         "volumeTotalDay": 120,
-        "volumeTotal": 45000,
+        "volumeTotal": volume_total,
         "tempWaterAverage": 185,
         "tempWaterMin": 170,
         "tempWaterMax": 210,
@@ -327,10 +356,10 @@ def build_cubic_measurement() -> dict:
     }
 
 
-def build_cubic_configuration() -> dict:
+def build_cubic_configuration(valve_state: str = "open") -> dict:
     return {
         "cacheUpdated": int(time.time()),
-        "valveState": "open",
+        "valveState": valve_state,
         "firmwareVersion": "1.2.3",
         "hardwareVersion": 4,
     }
@@ -343,6 +372,24 @@ def configure_fake_manager_with_sample_data(manager: FakeLKSystemsManager) -> No
     manager.hub_devices_by_hub = build_hub_devices_by_hub()
     manager.cubic_measurement_data = build_cubic_measurement()
     manager.cubic_configuration_data = build_cubic_configuration()
+
+
+def configure_fake_manager_with_two_cubic_devices(manager: FakeLKSystemsManager) -> None:
+    """Populate a FakeLKSystemsManager with two Cubic Secure devices, each
+    with distinct measurement/configuration data so tests can tell them
+    apart (see build_user_structure_with_two_cubic_devices()).
+    """
+    manager.user_structure = build_user_structure_with_two_cubic_devices()
+    manager.measurements_by_device = build_measurements_by_device()
+    manager.hub_devices_by_hub = build_hub_devices_by_hub()
+    manager.cubic_measurements_by_device = {
+        CUBIC_IDENTITY: build_cubic_measurement(volume_total=45000),
+        CUBIC_IDENTITY_2: build_cubic_measurement(volume_total=99000),
+    }
+    manager.cubic_configurations_by_device = {
+        CUBIC_IDENTITY: build_cubic_configuration(valve_state="open"),
+        CUBIC_IDENTITY_2: build_cubic_configuration(valve_state="closed"),
+    }
 
 
 @pytest.fixture
@@ -380,3 +427,11 @@ def entity_id(hass, platform: str, unique_id: str) -> str:
     found = er.async_get(hass).async_get_entity_id(platform, DOMAIN, unique_id)
     assert found is not None, f"no {platform} entity registered for {unique_id!r}"
     return found
+@pytest.fixture
+def fake_manager_with_two_cubic_devices() -> FakeLKSystemsManager:
+    """A FakeLKSystemsManager pre-populated with two Cubic Secure devices
+    registered under the same property.
+    """
+    manager = FakeLKSystemsManager()
+    configure_fake_manager_with_two_cubic_devices(manager)
+    return manager
