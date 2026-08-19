@@ -31,7 +31,12 @@ from custom_components.lksystems.sensor import (
     LKCubicSensor,
 )
 
-from .conftest import HUB_IDENTITY, THERMOSTAT_MAC, setup_entry as _setup_entry
+from .conftest import (
+    CUBIC_IDENTITY,
+    HUB_IDENTITY,
+    THERMOSTAT_MAC,
+    setup_entry as _setup_entry,
+)
 
 
 def _seed_restore_cache(hass, entity_id: str, native_value, fetched_at) -> None:
@@ -74,10 +79,11 @@ async def _restored_firmware_version_entity(hass, fake_manager, fetched_at):
     entry = await _setup_entry(hass, fake_manager)
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
-    coordinator.data["cubic_configuration"] = None
+    coordinator.data["cubic_devices"][CUBIC_IDENTITY]["configuration"] = None
     entity = LKCubicSensor(
         coordinator,
         LK_CUBICSECURE_CONFIG_SENSORS["firmwareVersion"],
+        CUBIC_IDENTITY,
         data_source="configuration",
     )
     entity.hass = hass
@@ -117,15 +123,16 @@ class TestCubicSensorRestore:
         entity = LKCubicSensor(
             coordinator,
             LK_CUBICSECURE_CONFIG_SENSORS["firmwareVersion"],
+            CUBIC_IDENTITY,
             data_source="configuration",
         )
         entity.hass = hass
         entity.entity_id = entity_id
         await entity.async_added_to_hass()
 
-        assert entity.native_value == coordinator.data["cubic_configuration"][
-            "firmwareVersion"
-        ]
+        assert entity.native_value == coordinator.data["cubic_devices"][
+            CUBIC_IDENTITY
+        ]["configuration"]["firmwareVersion"]
         assert entity.native_value != "old-version"
 
 
