@@ -64,12 +64,20 @@ class LkStructureResp(TypedDict):
     zip: str
     country: str
     ownerId: str
-    cubic_machine_info: LkStructureMashine
-    cubic_last_measurement: LkCubicSecureResp
-    cubic_configuration: LKCubicSecureConfigResp
+    cubic_devices: Dict[str, "LkCubicDeviceData"]
     cacheUpdated: int
     update_time: str
     next_update_time: str
+
+
+class LkCubicDeviceData(TypedDict):
+    """Per-Cubic-Secure-device data, keyed by device identity in
+    LkStructureResp.cubic_devices so multiple devices on one account
+    don't share a single overwritable slot."""
+
+    machine_info: LkStructureMashine
+    last_measurement: LkCubicSecureResp
+    configuration: LKCubicSecureConfigResp
 
 
 class LKCubicSecureConfigResp(TypedDict):
@@ -217,7 +225,6 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         # Store for later reference
         self._update_interval_minutes = update_interval_minutes
         self._entry = entry
-        self._cubic_identity = None
         self._last_update_time = dt_util.now()
         self._entry_id = entry.entry_id
         self._consecutive_failures = 0
@@ -474,16 +481,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                     "country": lk_inst.user_structure["country"],
                     "ownerId": lk_inst.user_structure["ownerId"],
                     "cacheUpdated": lk_inst.user_structure["cacheUpdated"],
-                    "cubic_machine_info": next(
-                        (
-                            x
-                            for x in lk_inst.user_structure["realestateMachines"]
-                            if x["deviceType"] == "cubicsecure"
-                            and x["deviceRole"] == "cubicsecure"
-                        ),
-                        None,
-                    ),
-                    "cubic_last_messurement": None,
+                    "cubic_devices": {},
                     "devices": [],
                     "device_details": {},  # Will store detailed information about each device
                     "update_time": self._last_update_time.isoformat(),
@@ -609,17 +607,15 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                             machine.get("deviceType") == "cubicsecure"
                             and machine.get("deviceRole") == "cubicsecure"
                         ):
-                            resp["cubic_machine_info"] = machine
-                            self._cubic_identity = device_identity
+                            resp["cubic_devices"][device_identity] = {
+                                "machine_info": machine
+                            }
 
                             # Try to get cubic measurements but don't fail if not available
                             try:
-                                if await lk_inst.get_cubic_secure_measurement(
+                                await lk_inst.get_cubic_secure_measurement(
                                     device_identity
-                                ):
-                                    resp["cubic_last_messurement"] = (
-                                        lk_inst.cubic_secure_messurement
-                                    )
+                                )
 
                                 if lk_inst.cubic_secure_messurement is not None:
                                     # Get time as unix timestamp
@@ -635,7 +631,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                                             "Cubic secure measurement is older than update interval, force update"
                                         )
                                         if not await lk_inst.get_cubic_secure_measurement(
-                                            self._cubic_identity, force_update=True
+                                            device_identity, force_update=True
                                         ):
                                             _LOGGER.error(
                                                 "Failed to get cubic secure measurement, abort update"
@@ -644,11 +640,11 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                                                 "Unknown error get_cubic_secure_measurement"
                                             )
 
-                                resp["cubic_last_measurement"] = (
-                                    lk_inst.cubic_secure_messurement
-                                )
+                                resp["cubic_devices"][device_identity][
+                                    "last_measurement"
+                                ] = lk_inst.cubic_secure_messurement
                                 if not await lk_inst.get_cubic_secure_configuration(
-                                    self._cubic_identity
+                                    device_identity
                                 ):
                                     _LOGGER.error(
                                         "Failed to get cubic secure configuration, abort update"
@@ -670,7 +666,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                                             "Cubic secure configuration is older than update interval, force update"
                                         )
                                         if not await lk_inst.get_cubic_secure_configuration(
-                                            self._cubic_identity, force_update=True
+                                            device_identity, force_update=True
                                         ):
                                             _LOGGER.error(
                                                 "Failed to get cubic secure configuration, abort update"
@@ -679,21 +675,26 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                                                 "Unknown error get_cubic_secure_configuration"
                                             )
 
-                                resp["cubic_configuration"] = (
-                                    lk_inst.cubic_secure_configuration
-                                )
+                                resp["cubic_devices"][device_identity][
+                                    "configuration"
+                                ] = lk_inst.cubic_secure_configuration
                             except Exception as err:
                                 # Sensors index these keys directly, so they
-                                # must exist even on failure; reuse the last
-                                # known values if we have them.
-                                previous_data = self.data or {}
-                                resp.setdefault(
-                                    "cubic_last_measurement",
-                                    previous_data.get("cubic_last_measurement"),
+                                # must exist even on failure; reuse this
+                                # device's last known values if we have them.
+                                previous_device_data = (
+                                    (self.data or {})
+                                    .get("cubic_devices", {})
+                                    .get(device_identity, {})
                                 )
-                                resp.setdefault(
-                                    "cubic_configuration",
-                                    previous_data.get("cubic_configuration"),
+                                device_entry = resp["cubic_devices"][device_identity]
+                                device_entry.setdefault(
+                                    "last_measurement",
+                                    previous_device_data.get("last_measurement"),
+                                )
+                                device_entry.setdefault(
+                                    "configuration",
+                                    previous_device_data.get("configuration"),
                                 )
                                 _LOGGER.warning(
                                     "Error fetching cubic measurements: %s", str(err)

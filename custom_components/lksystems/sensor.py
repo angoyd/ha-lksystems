@@ -50,7 +50,6 @@ async def async_setup_entry(
     """Set up LK Systems sensor based on a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities = []
     processed_devices = set()  # Track processed devices to avoid duplicates
     created_entity_ids = set()  # Track entity IDs to avoid duplicates
 
@@ -70,61 +69,102 @@ async def async_setup_entry(
             device_title = device.get("deviceTitle", {})
 
             if device_title.get("deviceType") == "cubicsecure":
+                device_identity = device_title.get("identity")
                 _LOGGER.debug(
                     "Setting up LK Cubic sensors for %s",
-                    coordinator.data["cubic_machine_info"]["zone"]["zoneName"],
+                    coordinator.data["cubic_devices"][device_identity][
+                        "machine_info"
+                    ]["zone"]["zoneName"],
                 )
+                cubic_entities = []
                 for key, description in LK_CUBICSECURE_SENSORS.items():
                     if key == "volumetotal":
-                        entities.append(LKCubicSensor(coordinator, description))
+                        cubic_entities.append(
+                            LKCubicSensor(coordinator, description, device_identity)
+                        )
                     if key == "volumetotalday":
-                        entities.append(LKCubicSensor(coordinator, description))
+                        cubic_entities.append(
+                            LKCubicSensor(coordinator, description, device_identity)
+                        )
                     if key == "tempWaterAverage":
-                        entities.append(LKCubicSensor(coordinator, description))
+                        cubic_entities.append(
+                            LKCubicSensor(coordinator, description, device_identity)
+                        )
                     if key == "tempWaterMin":
-                        entities.append(LKCubicSensor(coordinator, description))
+                        cubic_entities.append(
+                            LKCubicSensor(coordinator, description, device_identity)
+                        )
                     if key == "tempWaterMax":
-                        entities.append(LKCubicSensor(coordinator, description))
+                        cubic_entities.append(
+                            LKCubicSensor(coordinator, description, device_identity)
+                        )
                     if key == "waterPressure":
-                        entities.append(LKCubicSensor(coordinator, description))
+                        cubic_entities.append(
+                            LKCubicSensor(coordinator, description, device_identity)
+                        )
                     if key == "ambientTemp":
-                        entities.append(LKCubicSensor(coordinator, description))
+                        cubic_entities.append(
+                            LKCubicSensor(coordinator, description, device_identity)
+                        )
                     if key == "lastStatus":
-                        entities.append(LKCubicSensor(coordinator, description))
+                        cubic_entities.append(
+                            LKCubicSensor(coordinator, description, device_identity)
+                        )
                     if key == "cacheUpdated":
-                        entities.append(LKCubicSensor(coordinator, description))
+                        cubic_entities.append(
+                            LKCubicSensor(coordinator, description, device_identity)
+                        )
                     if key == "leak.leakState":
-                        entities.append(LKCubicSensor(coordinator, description))
+                        cubic_entities.append(
+                            LKCubicSensor(coordinator, description, device_identity)
+                        )
                     if key == "leak.meanFlow":
-                        entities.append(LKCubicSensor(coordinator, description))
+                        cubic_entities.append(
+                            LKCubicSensor(coordinator, description, device_identity)
+                        )
                     if key == "leak.dateStartedAt":
-                        entities.append(LKCubicSensor(coordinator, description))
+                        cubic_entities.append(
+                            LKCubicSensor(coordinator, description, device_identity)
+                        )
                     if key == "leak.dateUpdatedAt":
-                        entities.append(LKCubicSensor(coordinator, description))
+                        cubic_entities.append(
+                            LKCubicSensor(coordinator, description, device_identity)
+                        )
                     if key == "leak.acknowledged":
-                        entities.append(LKCubicSensor(coordinator, description))
+                        cubic_entities.append(
+                            LKCubicSensor(coordinator, description, device_identity)
+                        )
 
                 for key, description in LK_CUBICSECURE_CONFIG_SENSORS.items():
                     if key == "valveState":
-                        entities.append(
+                        cubic_entities.append(
                             LKCubicSensor(
-                                coordinator, description, data_source="configuration"
+                                coordinator,
+                                description,
+                                device_identity,
+                                data_source="configuration",
                             )
                         )
                     if key == "firmwareVersion":
-                        entities.append(
+                        cubic_entities.append(
                             LKCubicSensor(
-                                coordinator, description, data_source="configuration"
+                                coordinator,
+                                description,
+                                device_identity,
+                                data_source="configuration",
                             )
                         )
                     if key == "hardwareVersion":
-                        entities.append(
+                        cubic_entities.append(
                             LKCubicSensor(
-                                coordinator, description, data_source="configuration"
+                                coordinator,
+                                description,
+                                device_identity,
+                                data_source="configuration",
                             )
                         )
 
-                async_add_entities(entities, True)
+                async_add_entities(cubic_entities, True)
 
             # Collect all hubs
             if device_title.get("deviceType") == "arc-hub":
@@ -855,19 +895,21 @@ class AbstractLkCubicSensor(CoordinatorEntity[LKSystemCoordinator], SensorEntity
         self,
         coordinator: LKSystemCoordinator,
         description: SensorEntityDescription,
+        device_identity: str,
     ) -> None:
         """Initialize the sensor."""
         _LOGGER.debug("Creating %s sensor", description.name)
         super().__init__(coordinator)
         self._coordinator = coordinator
         self._device_model = CUBIC_SECURE_MODEL
-        self._device_name = (
-            f"Cubic Secure {coordinator.data['cubic_machine_info']['zone']['zoneName']}"
-        )
-        self._id = coordinator.data["cubic_machine_info"]["identity"]
+        self._id = device_identity
+        machine_info = coordinator.data["cubic_devices"][device_identity][
+            "machine_info"
+        ]
+        self._device_name = f"Cubic Secure {machine_info['zone']['zoneName']}"
         self.entity_description = description
         self.native_unit_of_measurement = description.native_unit_of_measurement
-        self._attr_unique_id = f"LkUid_{description.key}_{coordinator.data['cubic_machine_info']['identity']}"
+        self._attr_unique_id = f"LkUid_{description.key}_{device_identity}"
         self._attr_extra_state_attributes = {}
 
     @property
@@ -890,14 +932,17 @@ class LKCubicSensor(AbstractLkCubicSensor):
         self,
         coordinator: LKSystemCoordinator,
         description: SensorEntityDescription,
+        device_identity: str,
         data_source: str = "measurement",
     ) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator=coordinator, description=description)
+        super().__init__(
+            coordinator=coordinator,
+            description=description,
+            device_identity=device_identity,
+        )
         self._data_source = data_source
         self._data_key = description.key
-        self._attr_unique_id = f"LkUid_{description.key}_{coordinator.data['cubic_machine_info']['identity']}"
-        # self.native_unit_of_measurement = description.native_unit_of_measurement
         self._attr_extra_state_attributes = {}
 
         if "update_time" in self._coordinator.data:
@@ -931,9 +976,12 @@ class LKCubicSensor(AbstractLkCubicSensor):
     def native_value(self) -> Any | None:
         """Get the latest state value."""
         value = None
+        device_data = self._coordinator.data.get("cubic_devices", {}).get(
+            self._id, {}
+        )
 
         if self._data_source == "configuration":
-            cubic_configuration = self._coordinator.data.get("cubic_configuration") or {}
+            cubic_configuration = device_data.get("configuration") or {}
             if self._data_key in cubic_configuration:
                 value = cubic_configuration[self._data_key]
             elif "." in self._data_key:
@@ -944,9 +992,7 @@ class LKCubicSensor(AbstractLkCubicSensor):
                     if value is None:
                         break
         elif self._data_source == "measurement":
-            cubic_last_measurement = (
-                self._coordinator.data.get("cubic_last_measurement") or {}
-            )
+            cubic_last_measurement = device_data.get("last_measurement") or {}
             _LOGGER.debug("Getting measurement for key: %s", self._data_key)
             _LOGGER.debug(cubic_last_measurement)
             if self._data_key in cubic_last_measurement:
