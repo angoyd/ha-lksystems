@@ -26,25 +26,9 @@ from .conftest import (
     HUB_IDENTITY,
     SENSOR_MAC,
     THERMOSTAT_MAC,
+    entity_id as _entity_id,
+    setup_entry as _setup_entry,
 )
-
-
-async def _setup_entry(hass, manager) -> MockConfigEntry:
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={CONF_USERNAME: "user@example.com", CONF_PASSWORD: "hunter2"},
-    )
-    entry.add_to_hass(hass)
-    with patch("custom_components.lksystems.LKSystemsManager", return_value=manager):
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
-    return entry
-
-
-def _entity_id(hass, platform: str, unique_id: str) -> str:
-    entity_id = er.async_get(hass).async_get_entity_id(platform, DOMAIN, unique_id)
-    assert entity_id is not None, f"no {platform} entity registered for {unique_id!r}"
-    return entity_id
 
 
 async def test_thermostat_entity_reflects_client_data(hass, fake_manager):
