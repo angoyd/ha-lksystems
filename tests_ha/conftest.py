@@ -435,3 +435,35 @@ def fake_manager_with_two_cubic_devices() -> FakeLKSystemsManager:
     manager = FakeLKSystemsManager()
     configure_fake_manager_with_two_cubic_devices(manager)
     return manager
+
+
+async def setup_entry(
+    hass, manager: FakeLKSystemsManager, options: dict | None = None
+) -> MockConfigEntry:
+    """Drive a real config-entry setup against a FakeLKSystemsManager.
+
+    Runs the coordinator's first refresh and both the sensor.py and
+    climate.py platforms' async_setup_entry() for real, so tests can inspect
+    the entities/entity registry they actually produce.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_USERNAME: "user@example.com", CONF_PASSWORD: "hunter2"},
+        options=options or {},
+    )
+    entry.add_to_hass(hass)
+    with patch("custom_components.lksystems.LKSystemsManager", return_value=manager):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    return entry
+
+
+def entity_id(hass, platform: str, unique_id: str) -> str:
+    """Look up an entity_id by platform/unique_id via the entity registry.
+
+    Entities are looked up this way, rather than by guessing slugified
+    entity_ids, so tests don't depend on HA's naming/slugify rules.
+    """
+    found = er.async_get(hass).async_get_entity_id(platform, DOMAIN, unique_id)
+    assert found is not None, f"no {platform} entity registered for {unique_id!r}"
+    return found
