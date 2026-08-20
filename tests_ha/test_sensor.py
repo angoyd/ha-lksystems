@@ -8,6 +8,7 @@ slugified entity_ids.
 from __future__ import annotations
 
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
 from custom_components.lksystems.const import DOMAIN
 
