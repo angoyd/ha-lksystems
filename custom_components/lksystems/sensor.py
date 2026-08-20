@@ -42,6 +42,15 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _resolve_device_name(device_title: dict, fallback: str) -> str:
+    """Return the device's own display name, falling back to a default.
+
+    Not every device has a friendly "name" in deviceTitle - fall back so
+    the device (as opposed to any one entity on it) is never unnamed.
+    """
+    return device_title.get("name") or fallback
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -429,6 +438,8 @@ async def async_setup_entry(
 class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
     """Representation of an LK Systems sensor entity."""
 
+    _attr_has_entity_name = True
+
     def __init__(
         self,
         coordinator: LKSystemCoordinator,
@@ -474,20 +485,20 @@ class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
         # Set entity unique ID (must be consistent and unique)
         self._attr_unique_id = f"{DOMAIN}_{device_identity}_{entity_key}"
 
-        # Set entity name using friendly name if available
-        friendly_name = device_title.get("name")
-        if friendly_name:
-            self._attr_name = f"{friendly_name} {name_suffix}"
-        else:
-            room_name = (
-                device_title.get("zone", {}).get("zoneName")
-                if device_title.get("zone")
-                else None
-            )
-            if room_name:
-                self._attr_name = f"LK {room_name} {name_suffix}"
-            else:
-                self._attr_name = f"LK Sensor {name_suffix}"
+        # The entity's own name is just its suffix (e.g. "Temperature") -
+        # has_entity_name means HA combines it with the device name below
+        # to build the displayed name, rather than this class baking the
+        # device name into its own _attr_name.
+        self._attr_name = name_suffix
+
+        room_name = (
+            device_title.get("zone", {}).get("zoneName")
+            if device_title.get("zone")
+            else None
+        )
+        device_name = _resolve_device_name(
+            device_title, f"LK {room_name}" if room_name else "LK Sensor"
+        )
 
         # Get zone info for naming
         zone_name = None
@@ -497,7 +508,7 @@ class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
         # Set up device info with proper connection to parent if available
         device_info = {
             "identifiers": {(DOMAIN, device_identity)},
-            "name": self._attr_name.replace(f" {name_suffix}", ""),
+            "name": device_name,
             "manufacturer": "LK Systems",
             "model": device_type,
         }
@@ -756,6 +767,8 @@ class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
 class LKArcHubEntity(CoordinatorEntity, SensorEntity):
     """Representation of an LK Systems ARC Hub entity."""
 
+    _attr_has_entity_name = True
+
     def __init__(
         self,
         coordinator: LKSystemCoordinator,
@@ -792,17 +805,13 @@ class LKArcHubEntity(CoordinatorEntity, SensorEntity):
         # Create unique ID using identity if available, otherwise mac
         self._attr_unique_id = f"{DOMAIN}_{device_identity}_{entity_key}"
 
-        # Set name - use device name if available
-        friendly_name = device_title.get("name")
-        if friendly_name:
-            self._attr_name = f"{friendly_name} {name_suffix}"
-        else:
-            self._attr_name = f"LK ARC Hub {name_suffix}"
+        self._attr_name = name_suffix
+        device_name = _resolve_device_name(device_title, "LK ARC Hub")
 
         # Set up device info
         device_info = {
             "identifiers": {(DOMAIN, device_identity)},
-            "name": self._attr_name.replace(f" {name_suffix}", ""),
+            "name": device_name,
             "manufacturer": "LK Systems",
             "model": device_type,
             "sw_version": None,
