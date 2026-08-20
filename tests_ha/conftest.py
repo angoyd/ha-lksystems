@@ -438,7 +438,7 @@ def fake_manager_with_two_cubic_devices() -> FakeLKSystemsManager:
     return manager
 
 
-async def setup_entry(hass, manager: FakeLKSystemsManager) -> MockConfigEntry:
+
 def get_issue(hass, issue_id: str):
     """Look up a repair issue by id via the issue registry."""
     return ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
