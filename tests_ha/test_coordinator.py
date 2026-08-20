@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -109,6 +110,19 @@ class TestCoordinatorConstruction:
         assert coordinator.update_interval == timedelta(
             minutes=DEFAULT_UPDATE_INTERVAL
         )
+
+    async def test_construction_does_not_log_above_debug(self, hass, caplog):
+        # Setting up the coordinator's update interval is routine, expected
+        # behaviour on every startup/reload - it shouldn't show up in a
+        # user's log unless they've turned on debug logging.
+        entry = _make_entry(hass)
+
+        with caplog.at_level(
+            logging.WARNING, logger="custom_components.lksystems"
+        ):
+            LKSystemCoordinator(hass, entry)
+
+        assert caplog.records == []
 
 
 class TestAsyncUpdateData:

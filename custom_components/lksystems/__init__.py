@@ -217,7 +217,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             )
         )
 
-        _LOGGER.warning(
+        _LOGGER.debug(
             "Initializing LK Systems coordinator with update interval: %d minutes",
             update_interval_minutes,
         )
@@ -235,27 +235,6 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             _LOGGER,
             name=DOMAIN,
             update_interval=timedelta(minutes=update_interval_minutes),
-        )
-
-        # Schedule regular updates
-        self._setup_update_interval()
-
-    def _setup_update_interval(self):
-        """Set up the update interval."""
-        _LOGGER.warning(
-            f"Setting up update interval for {DOMAIN} to {self._update_interval_minutes} minutes"
-        )
-
-        # Cancel any existing scheduled updates
-        self._unsub_refresh = None
-
-        # Ensure the update interval is correctly set
-        self.update_interval = timedelta(minutes=self._update_interval_minutes)
-
-        # Log next update time
-        next_update = dt_util.utcnow() + self.update_interval
-        _LOGGER.warning(
-            f"Next automatic update scheduled for: {next_update.isoformat()}"
         )
 
     async def set_thermostat_temperature(self, device_id, temperature):
