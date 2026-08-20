@@ -20,6 +20,7 @@ import time
 from unittest.mock import patch
 
 import pytest
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -437,6 +438,9 @@ def fake_manager_with_two_cubic_devices() -> FakeLKSystemsManager:
     return manager
 
 
+def get_issue(hass, issue_id: str):
+    """Look up a repair issue by id via the issue registry."""
+    return ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
 async def setup_entry(
     hass, manager: FakeLKSystemsManager, options: dict | None = None
 ) -> MockConfigEntry:
