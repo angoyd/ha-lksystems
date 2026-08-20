@@ -17,8 +17,15 @@ from __future__ import annotations
 
 import asyncio
 import time
+from unittest.mock import patch
 
 import pytest
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from custom_components.lksystems.const import DOMAIN
 
 pytest_plugins = "pytest_homeassistant_custom_component"
 
@@ -266,9 +273,8 @@ def build_user_structure() -> dict:
 
 def build_user_structure_with_two_cubic_devices() -> dict:
     """Same as build_user_structure(), but with a second Cubic Secure
-    machine registered under the same property - reproducing the account
-    layout from issue #29 (two Cubic Secure devices, e.g. "Kitchen" and
-    "Garage", registered under one realestate).
+    machine registered under the same property - two Cubic Secure devices
+    (e.g. "Kitchen" and "Garage") registered under one realestate.
     """
     structure = build_user_structure()
     structure["realestateMachines"].append(
@@ -395,11 +401,74 @@ def fake_manager() -> FakeLKSystemsManager:
     return manager
 
 
+async def setup_entry(hass, manager: FakeLKSystemsManager) -> MockConfigEntry:
+    """Drive a real config-entry setup against a FakeLKSystemsManager.
+
+    Runs the coordinator's first refresh and both the sensor.py and
+    climate.py platforms' async_setup_entry() for real, so tests can inspect
+    the entities/entity registry they actually produce.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_USERNAME: "user@example.com", CONF_PASSWORD: "hunter2"},
+    )
+    entry.add_to_hass(hass)
+    with patch("custom_components.lksystems.LKSystemsManager", return_value=manager):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    return entry
+
+
+def entity_id(hass, platform: str, unique_id: str) -> str:
+    """Look up an entity_id by platform/unique_id via the entity registry.
+
+    Entities are looked up this way, rather than by guessing slugified
+    entity_ids, so tests don't depend on HA's naming/slugify rules.
+    """
+    found = er.async_get(hass).async_get_entity_id(platform, DOMAIN, unique_id)
+    assert found is not None, f"no {platform} entity registered for {unique_id!r}"
+    return found
 @pytest.fixture
 def fake_manager_with_two_cubic_devices() -> FakeLKSystemsManager:
     """A FakeLKSystemsManager pre-populated with two Cubic Secure devices
-    registered under the same property (issue #29).
+    registered under the same property.
     """
     manager = FakeLKSystemsManager()
     configure_fake_manager_with_two_cubic_devices(manager)
     return manager
+
+
+
+def get_issue(hass, issue_id: str):
+    """Look up a repair issue by id via the issue registry."""
+    return ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+async def setup_entry(
+    hass, manager: FakeLKSystemsManager, options: dict | None = None
+) -> MockConfigEntry:
+    """Drive a real config-entry setup against a FakeLKSystemsManager.
+
+    Runs the coordinator's first refresh and both the sensor.py and
+    climate.py platforms' async_setup_entry() for real, so tests can inspect
+    the entities/entity registry they actually produce.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_USERNAME: "user@example.com", CONF_PASSWORD: "hunter2"},
+        options=options or {},
+    )
+    entry.add_to_hass(hass)
+    with patch("custom_components.lksystems.LKSystemsManager", return_value=manager):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    return entry
+
+
+def entity_id(hass, platform: str, unique_id: str) -> str:
+    """Look up an entity_id by platform/unique_id via the entity registry.
+
+    Entities are looked up this way, rather than by guessing slugified
+    entity_ids, so tests don't depend on HA's naming/slugify rules.
+    """
+    found = er.async_get(hass).async_get_entity_id(platform, DOMAIN, unique_id)
+    assert found is not None, f"no {platform} entity registered for {unique_id!r}"
+    return found
