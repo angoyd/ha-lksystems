@@ -41,6 +41,8 @@ async def test_thermostat_entity_reflects_client_data(hass, fake_manager):
 
 
 async def test_standalone_sensor_entities_reflect_client_data(hass, fake_manager):
+    """RSSI is excluded here - it's disabled by default, so it has no live
+    state to assert on; see test_sensor.py for that."""
     await _setup_entry(hass, fake_manager)
 
     temperature_id = _entity_id(
@@ -48,12 +50,10 @@ async def test_standalone_sensor_entities_reflect_client_data(hass, fake_manager
     )
     humidity_id = _entity_id(hass, "sensor", f"{DOMAIN}_{SENSOR_MAC}_humidity")
     battery_id = _entity_id(hass, "sensor", f"{DOMAIN}_{SENSOR_MAC}_battery")
-    rssi_id = _entity_id(hass, "sensor", f"{DOMAIN}_{SENSOR_MAC}_rssi")
 
     assert hass.states.get(temperature_id).state == "19.0"
     assert hass.states.get(humidity_id).state == "40.0"
     assert hass.states.get(battery_id).state == "75"
-    assert hass.states.get(rssi_id).state == "-60"
 
 
 async def test_hub_and_hub_child_entities_are_created(hass, fake_manager):
