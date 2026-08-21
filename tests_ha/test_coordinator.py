@@ -124,6 +124,45 @@ class TestCoordinatorConstruction:
 
         assert caplog.records == []
 
+    async def test_last_successful_cloud_fetch_starts_none(self, hass):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+        assert coordinator.last_successful_cloud_fetch is None
+
+
+class TestLastSuccessfulCloudFetch:
+    """Restoring entity state across a restart needs a per-update
+    timestamp to judge whether a restored value is still fresh enough to
+    show."""
+
+    async def test_successful_update_sets_the_timestamp(self, hass, fake_manager):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        before = dt_util.utcnow()
+        with _patch_manager(fake_manager):
+            await coordinator._async_update_data()
+        after = dt_util.utcnow()
+
+        assert coordinator.last_successful_cloud_fetch is not None
+        assert before <= coordinator.last_successful_cloud_fetch <= after
+
+    async def test_failed_update_does_not_clear_a_prior_timestamp(
+        self, hass, fake_manager
+    ):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+        with _patch_manager(fake_manager):
+            await coordinator._async_update_data()
+        first_fetch_time = coordinator.last_successful_cloud_fetch
+
+        fake_manager.get_user_structure_result = False
+        with _patch_manager(fake_manager):
+            with pytest.raises(UpdateFailed):
+                await coordinator._async_update_data()
+
+        assert coordinator.last_successful_cloud_fetch == first_fetch_time
+
 
 class TestAsyncUpdateData:
     async def test_missing_credentials_raises_auth_failed(self, hass):

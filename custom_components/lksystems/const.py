@@ -14,8 +14,8 @@ INTEGRATION_NAME = "LK Systems"
 ATTRIBUTION = "Data provided by LK Systems API"
 MANUFACTURER = "LK Systems"
 
-C_NEXT_UPDATE_TIME = "next_update"
-C_UPDATE_TIME = "last_update"
+C_NEXT_UPDATE_TIME = "next_cloud_fetch_attempt"
+C_UPDATE_TIME = "last_cloud_fetch_attempt"
 
 CUBIC_SECURE_MODEL = "Cubic Secure"
 

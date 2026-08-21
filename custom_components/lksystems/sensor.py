@@ -6,6 +6,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
@@ -39,6 +40,7 @@ from .const import (
     LK_CUBICSECURE_CONFIG_SENSORS,
     MANUFACTURER,
 )
+from .restore import RestoredNativeValueMixin, last_successful_cloud_fetch_attributes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -440,7 +442,7 @@ async def async_setup_entry(
         _LOGGER.debug("Added %d sensor entities", len(sensor_entities))
 
 
-class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
+class LKArcSensorEntity(RestoredNativeValueMixin, CoordinatorEntity, RestoreSensor):
     """Representation of an LK Systems sensor entity."""
 
     _attr_has_entity_name = True
@@ -568,9 +570,8 @@ class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
         """Return the unit of measurement."""
         return self._attr_unit_of_measurement
 
-    @property
-    def native_value(self) -> Any:
-        """Return the value of the sensor."""
+    def _live_native_value(self) -> Any:
+        """Return the value of the sensor from the coordinator's live data."""
         # First check device_details for the most up-to-date information
         if "device_details" in self.coordinator.data:
             device_details = self.coordinator.data["device_details"].get(
@@ -751,27 +752,36 @@ class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
             )
 
         # Add last update time
-        if self.coordinator and hasattr(self.coordinator, "_last_update_time"):
-            attrs["last_updated"] = self.coordinator._last_update_time.isoformat()
+        if self.coordinator and hasattr(self.coordinator, "_last_cloud_fetch_attempt"):
+            attrs["last_cloud_fetch_attempt"] = (
+                self.coordinator._last_cloud_fetch_attempt.isoformat()
+            )
 
         # Add next scheduled update time
         if (
             self.coordinator
             and hasattr(self.coordinator, "update_interval")
-            and hasattr(self.coordinator, "_last_update_time")
+            and hasattr(self.coordinator, "_last_cloud_fetch_attempt")
         ):
-            next_update = (
-                self.coordinator._last_update_time + self.coordinator.update_interval
+            next_cloud_fetch_attempt = (
+                self.coordinator._last_cloud_fetch_attempt
+                + self.coordinator.update_interval
             )
-            attrs["next_update"] = next_update.isoformat()
+            attrs["next_cloud_fetch_attempt"] = next_cloud_fetch_attempt.isoformat()
 
         # Add refresh button attribute with a timestamp to force UI refresh
         attrs["refresh_timestamp"] = dt_util.now().timestamp()
 
+        attrs.update(
+            last_successful_cloud_fetch_attributes(
+                self.coordinator.last_successful_cloud_fetch
+            )
+        )
+
         return attrs
 
 
-class LKArcHubEntity(CoordinatorEntity, SensorEntity):
+class LKArcHubEntity(RestoredNativeValueMixin, CoordinatorEntity, RestoreSensor):
     """Representation of an LK Systems ARC Hub entity."""
 
     _attr_has_entity_name = True
@@ -840,9 +850,8 @@ class LKArcHubEntity(CoordinatorEntity, SensorEntity):
         """Return the device class."""
         return self._device_class
 
-    @property
-    def native_value(self) -> Any:
-        """Return the value of the sensor."""
+    def _live_native_value(self) -> Any:
+        """Return the value of the sensor from the coordinator's live data."""
         # First check the device_details dictionary which has the most up-to-date information
         if "device_details" in self.coordinator.data:
             device_details = self.coordinator.data["device_details"].get(
@@ -901,8 +910,17 @@ class LKArcHubEntity(CoordinatorEntity, SensorEntity):
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the last-successful-cloud-fetch timestamp."""
+        return last_successful_cloud_fetch_attributes(
+            self.coordinator.last_successful_cloud_fetch
+        )
 
-class AbstractLkCubicSensor(CoordinatorEntity[LKSystemCoordinator], SensorEntity):
+
+class AbstractLkCubicSensor(
+    RestoredNativeValueMixin, CoordinatorEntity[LKSystemCoordinator], RestoreSensor
+):
     """Abstract class for an LK Cubic secure sensor."""
 
     _attr_attribution = ATTRIBUTION
@@ -970,6 +988,7 @@ class LKCubicSensor(AbstractLkCubicSensor):
             self._attr_extra_state_attributes.update(
                 {C_NEXT_UPDATE_TIME: self._coordinator.data["next_update_time"]}
             )
+        self._update_last_successful_cloud_fetch_attribute()
         self._attr_available = False
 
     async def async_update(self) -> None:
@@ -987,11 +1006,18 @@ class LKCubicSensor(AbstractLkCubicSensor):
             self._attr_extra_state_attributes.update(
                 {C_NEXT_UPDATE_TIME: self._coordinator.data["next_update_time"]}
             )
+        self._update_last_successful_cloud_fetch_attribute()
         super()._handle_coordinator_update()
 
-    @property
-    def native_value(self) -> Any | None:
-        """Get the latest state value."""
+    def _update_last_successful_cloud_fetch_attribute(self) -> None:
+        self._attr_extra_state_attributes.update(
+            last_successful_cloud_fetch_attributes(
+                self.coordinator.last_successful_cloud_fetch
+            )
+        )
+
+    def _live_native_value(self) -> Any | None:
+        """Get the latest state value from the coordinator's live data."""
         value = None
         device_data = self._coordinator.data.get("cubic_devices", {}).get(
             self._id, {}
