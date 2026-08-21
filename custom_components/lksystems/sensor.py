@@ -13,6 +13,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    EntityCategory,
     PERCENTAGE,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     UnitOfTemperature,
@@ -425,6 +426,10 @@ async def async_setup_entry(
                                 SensorDeviceClass.SIGNAL_STRENGTH,
                                 SensorStateClass.MEASUREMENT,
                                 SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+                                # Signal-strength diagnostics, not a reading
+                                # most users watch day-to-day - the textbook
+                                # HA case for opt-in-only.
+                                entity_registry_enabled_default=False,
                             )
                         )
                         created_entity_ids.add(entity_id)
@@ -450,6 +455,7 @@ class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
         device_class: Optional[str] = None,
         state_class: Optional[str] = None,
         unit_of_measurement: Optional[str] = None,
+        entity_registry_enabled_default: bool = True,
     ) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
@@ -460,6 +466,7 @@ class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
         self._attr_icon = icon
         self._attr_state_class = state_class
         self._attr_unit_of_measurement = unit_of_measurement
+        self._attr_entity_registry_enabled_default = entity_registry_enabled_default
 
         # Get device info
         device_title = device.get("deviceTitle", {})
@@ -768,6 +775,7 @@ class LKArcHubEntity(CoordinatorEntity, SensorEntity):
     """Representation of an LK Systems ARC Hub entity."""
 
     _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(
         self,

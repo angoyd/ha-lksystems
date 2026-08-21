@@ -7,6 +7,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
+from homeassistant.const import EntityCategory
 
 DOMAIN = "lksystems"
 INTEGRATION_NAME = "LK Systems"
@@ -68,6 +69,7 @@ LK_CUBICSECURE_SENSORS: dict[str, SensorEntityDescription] = {
         native_unit_of_measurement="°C",
         state_class=SensorStateClass.MEASUREMENT,
         translation_key="temp_water_min_sensor",
+        entity_registry_enabled_default=False,
     ),
     "tempWaterMax": SensorEntityDescription(
         key="tempWaterMax",
@@ -78,6 +80,7 @@ LK_CUBICSECURE_SENSORS: dict[str, SensorEntityDescription] = {
         native_unit_of_measurement="°C",
         state_class=SensorStateClass.MEASUREMENT,
         translation_key="temp_water_max_sensor",
+        entity_registry_enabled_default=False,
     ),
     "waterPressure": SensorEntityDescription(
         key="waterPressure",
@@ -118,6 +121,7 @@ LK_CUBICSECURE_SENSORS: dict[str, SensorEntityDescription] = {
         native_unit_of_measurement=None,
         state_class=None,
         translation_key="cache_updated_sensor",
+        entity_registry_enabled_default=False,
     ),
     "leak.leakState": SensorEntityDescription(
         key="leak.leakState",
@@ -138,6 +142,7 @@ LK_CUBICSECURE_SENSORS: dict[str, SensorEntityDescription] = {
         native_unit_of_measurement="L/h",
         state_class=SensorStateClass.MEASUREMENT,
         translation_key="leak_mean_flow_sensor",
+        entity_registry_enabled_default=False,
     ),
     "leak.dateStartedAt": SensorEntityDescription(
         key="leak.dateStartedAt",
@@ -148,6 +153,7 @@ LK_CUBICSECURE_SENSORS: dict[str, SensorEntityDescription] = {
         native_unit_of_measurement=None,
         state_class=None,
         translation_key="leak_date_started_at_sensor",
+        entity_registry_enabled_default=False,
     ),
     "leak.dateUpdatedAt": SensorEntityDescription(
         key="leak.dateUpdatedAt",
@@ -158,6 +164,7 @@ LK_CUBICSECURE_SENSORS: dict[str, SensorEntityDescription] = {
         native_unit_of_measurement=None,
         state_class=None,
         translation_key="leak_date_updated_at_sensor",
+        entity_registry_enabled_default=False,
     ),
     "leak.acknowledged": SensorEntityDescription(
         key="leak.acknowledged",
@@ -168,6 +175,7 @@ LK_CUBICSECURE_SENSORS: dict[str, SensorEntityDescription] = {
         native_unit_of_measurement=None,
         state_class=None,
         translation_key="leak_acknowledged_sensor",
+        entity_registry_enabled_default=False,
     ),
 }
 LK_CUBICSECURE_CONFIG_SENSORS: dict[str, SensorEntityDescription] = {
@@ -190,6 +198,7 @@ LK_CUBICSECURE_CONFIG_SENSORS: dict[str, SensorEntityDescription] = {
         native_unit_of_measurement=None,
         state_class=None,
         translation_key="firmware_version_sensor",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     "hardwareVersion": SensorEntityDescription(
         key="hardwareVersion",
@@ -200,5 +209,6 @@ LK_CUBICSECURE_CONFIG_SENSORS: dict[str, SensorEntityDescription] = {
         native_unit_of_measurement=None,
         state_class=None,
         translation_key="hardware_version_sensor",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
 }
