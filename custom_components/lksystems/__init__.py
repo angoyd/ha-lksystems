@@ -217,7 +217,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             )
         )
 
-        _LOGGER.warning(
+        _LOGGER.debug(
             "Initializing LK Systems coordinator with update interval: %d minutes",
             update_interval_minutes,
         )
@@ -238,27 +238,6 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             update_interval=timedelta(minutes=update_interval_minutes),
         )
 
-        # Schedule regular updates
-        self._setup_update_interval()
-
-    def _setup_update_interval(self):
-        """Set up the update interval."""
-        _LOGGER.warning(
-            f"Setting up update interval for {DOMAIN} to {self._update_interval_minutes} minutes"
-        )
-
-        # Cancel any existing scheduled updates
-        self._unsub_refresh = None
-
-        # Ensure the update interval is correctly set
-        self.update_interval = timedelta(minutes=self._update_interval_minutes)
-
-        # Log next update time
-        next_update = dt_util.utcnow() + self.update_interval
-        _LOGGER.warning(
-            f"Next automatic update scheduled for: {next_update.isoformat()}"
-        )
-
     async def set_thermostat_temperature(self, device_id, temperature):
         """Set thermostat temperature through the API.
 
@@ -277,6 +256,26 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             password = self._entry.data.get(CONF_PASSWORD)
 
             async with LKSystemsManager(username, password) as lk_inst:
+                # Use existing token if available
+                stored_tokens = TOKEN_STORAGE.get(self._entry_id, {})
+                stored_jwt = stored_tokens.get("jwt")
+
+                if stored_jwt and is_token_valid(stored_jwt):
+                    lk_inst.jwt_token = stored_jwt
+                    lk_inst.refresh_token = stored_tokens.get("refresh")
+                else:
+                    # Login if no valid token
+                    if not await lk_inst.login():
+                        _LOGGER.error("Login failed when setting temperature")
+                        return False
+
+                    # Store the new tokens
+                    TOKEN_STORAGE[self._entry_id] = {
+                        "jwt": lk_inst.jwt_token,
+                        "refresh": lk_inst.refresh_token,
+                        "expiry": dt_util.utcnow().timestamp() + 3600,
+                    }
+
                 # Call the LKSystemsManager method to set the temperature
                 result = await lk_inst.set_thermostat_temperature(
                     device_id, temperature

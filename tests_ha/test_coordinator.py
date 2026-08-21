@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -109,6 +110,19 @@ class TestCoordinatorConstruction:
         assert coordinator.update_interval == timedelta(
             minutes=DEFAULT_UPDATE_INTERVAL
         )
+
+    async def test_construction_does_not_log_above_debug(self, hass, caplog):
+        # Setting up the coordinator's update interval is routine, expected
+        # behaviour on every startup/reload - it shouldn't show up in a
+        # user's log unless they've turned on debug logging.
+        entry = _make_entry(hass)
+
+        with caplog.at_level(
+            logging.WARNING, logger="custom_components.lksystems"
+        ):
+            LKSystemCoordinator(hass, entry)
+
+        assert caplog.records == []
 
     async def test_last_successful_cloud_fetch_starts_none(self, hass):
         entry = _make_entry(hass)
@@ -514,3 +528,47 @@ class TestSetThermostatTemperature:
             )
 
         assert result is False
+
+    async def test_logs_in_before_calling_the_api(self, hass, fake_manager):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            result = await coordinator.set_thermostat_temperature(
+                THERMOSTAT_MAC, 225
+            )
+
+        assert result is True
+        call_names = [call[0] for call in fake_manager.calls]
+        assert call_names.index("login") < call_names.index(
+            "set_thermostat_temperature"
+        )
+
+    async def test_login_failure_returns_false(self, hass, fake_manager):
+        fake_manager.login_result = False
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            result = await coordinator.set_thermostat_temperature(
+                THERMOSTAT_MAC, 225
+            )
+
+        assert result is False
+
+    async def test_reuses_stored_valid_token(self, hass, fake_manager):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+        TOKEN_STORAGE[entry.entry_id] = {
+            "jwt": _make_token(3600),
+            "refresh": "stored-refresh-token",
+            "expiry": dt_util.utcnow().timestamp() + 3600,
+        }
+
+        with _patch_manager(fake_manager):
+            result = await coordinator.set_thermostat_temperature(
+                THERMOSTAT_MAC, 225
+            )
+
+        assert result is True
+        assert ("login",) not in fake_manager.calls
