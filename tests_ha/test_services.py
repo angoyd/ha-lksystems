@@ -19,13 +19,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.lksystems.const import DOMAIN
 
-from .conftest import CUBIC_IDENTITY
-
-
-def _patch_services_manager(manager):
-    return patch(
-        "custom_components.lksystems.services.LKSystemsManager", return_value=manager
-    )
+from .conftest import CUBIC_IDENTITY, patch_services_manager
 
 
 async def _setup_entry_and_get_cubic_device(hass, manager):
@@ -49,7 +43,7 @@ async def _setup_entry_and_get_cubic_device(hass, manager):
 async def test_close_valve_calls_client(hass, fake_manager):
     _, device_entry = await _setup_entry_and_get_cubic_device(hass, fake_manager)
 
-    with _patch_services_manager(fake_manager):
+    with patch_services_manager(fake_manager):
         await hass.services.async_call(
             DOMAIN, "close_valve", {"device_id": device_entry.id}, blocking=True
         )
@@ -60,7 +54,7 @@ async def test_close_valve_calls_client(hass, fake_manager):
 async def test_open_valve_calls_client(hass, fake_manager):
     _, device_entry = await _setup_entry_and_get_cubic_device(hass, fake_manager)
 
-    with _patch_services_manager(fake_manager):
+    with patch_services_manager(fake_manager):
         await hass.services.async_call(
             DOMAIN, "open_valve", {"device_id": device_entry.id}, blocking=True
         )
@@ -71,7 +65,7 @@ async def test_open_valve_calls_client(hass, fake_manager):
 async def test_pause_leak_detection_calls_client(hass, fake_manager):
     _, device_entry = await _setup_entry_and_get_cubic_device(hass, fake_manager)
 
-    with _patch_services_manager(fake_manager):
+    with patch_services_manager(fake_manager):
         await hass.services.async_call(
             DOMAIN,
             "pause_leak_detection",
@@ -89,7 +83,7 @@ async def test_pause_leak_detection_calls_client(hass, fake_manager):
 async def test_set_pressure_test_schedule_calls_client(hass, fake_manager):
     _, device_entry = await _setup_entry_and_get_cubic_device(hass, fake_manager)
 
-    with _patch_services_manager(fake_manager):
+    with patch_services_manager(fake_manager):
         await hass.services.async_call(
             DOMAIN,
             "set_pressure_test_schedule",
@@ -108,7 +102,7 @@ async def test_set_pressure_test_schedule_calls_client(hass, fake_manager):
 async def test_set_thresholds_calls_client_with_defaults(hass, fake_manager):
     _, device_entry = await _setup_entry_and_get_cubic_device(hass, fake_manager)
 
-    with _patch_services_manager(fake_manager):
+    with patch_services_manager(fake_manager):
         await hass.services.async_call(
             DOMAIN,
             "set_thresholds",
@@ -131,7 +125,7 @@ async def test_close_valve_login_failure_does_not_raise(hass, fake_manager):
     _, device_entry = await _setup_entry_and_get_cubic_device(hass, fake_manager)
     fake_manager.login_result = False
 
-    with _patch_services_manager(fake_manager):
+    with patch_services_manager(fake_manager):
         await hass.services.async_call(
             DOMAIN, "close_valve", {"device_id": device_entry.id}, blocking=True
         )
@@ -163,7 +157,7 @@ async def test_unknown_device_does_not_raise(
     """
     await _setup_entry_and_get_cubic_device(hass, fake_manager)
 
-    with _patch_services_manager(fake_manager):
+    with patch_services_manager(fake_manager):
         await hass.services.async_call(
             DOMAIN,
             service,
