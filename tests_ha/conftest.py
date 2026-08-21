@@ -428,22 +428,6 @@ def entity_id(hass, platform: str, unique_id: str) -> str:
     found = er.async_get(hass).async_get_entity_id(platform, DOMAIN, unique_id)
     assert found is not None, f"no {platform} entity registered for {unique_id!r}"
     return found
-
-
-def patch_services_manager(manager: FakeLKSystemsManager):
-    """Patch the LKSystemsManager used by services.py's own handlers.
-
-    Needed by anything that ends up going through a service call - either
-    directly (hass.services.async_call) or indirectly (an entity whose
-    action delegates to a service, e.g. button.py's pause-leak-detection
-    button) - since each service handler opens its own LKSystemsManager
-    rather than reusing the one patched for coordinator setup.
-    """
-    return patch(
-        "custom_components.lksystems.services.LKSystemsManager", return_value=manager
-    )
-
-
 @pytest.fixture
 def fake_manager_with_two_cubic_devices() -> FakeLKSystemsManager:
     """A FakeLKSystemsManager pre-populated with two Cubic Secure devices
@@ -463,9 +447,9 @@ async def setup_entry(
 ) -> MockConfigEntry:
     """Drive a real config-entry setup against a FakeLKSystemsManager.
 
-    Runs the coordinator's first refresh and every platform's
-    async_setup_entry() for real (see __init__.py's PLATFORMS), so tests can
-    inspect the entities/entity registry they actually produce.
+    Runs the coordinator's first refresh and both the sensor.py and
+    climate.py platforms' async_setup_entry() for real, so tests can inspect
+    the entities/entity registry they actually produce.
     """
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -477,15 +461,6 @@ async def setup_entry(
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
     return entry
-
-
-def pause_leak_detection_duration_unique_id(device_identity: str) -> str:
-    """unique_id of a device's "Pause Leak Detection Duration" number entity.
-
-    Shared by test_number.py (which owns the entity) and test_button.py
-    (which needs to look it up to drive the paired button's tests).
-    """
-    return f"LkUid_pause_leak_detection_duration_{device_identity}"
 
 
 def entity_id(hass, platform: str, unique_id: str) -> str:

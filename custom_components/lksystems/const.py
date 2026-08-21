@@ -28,12 +28,6 @@ CONF_UPDATE_INTERVAL = "update_interval"
 # Default update interval in minutes
 DEFAULT_UPDATE_INTERVAL = 5
 
-# Default/bounds (in seconds) for the "Pause Leak Detection Duration" number
-# entity. The default matches the pause_leak_detection service's own default.
-DEFAULT_PAUSE_LEAK_DETECTION_SECONDS: Final = 3600
-PAUSE_LEAK_DETECTION_MIN_SECONDS: Final = 60
-PAUSE_LEAK_DETECTION_MAX_SECONDS: Final = 86400
-
 
 LK_CUBICSECURE_SENSORS: dict[str, SensorEntityDescription] = {
     "volumetotalday": SensorEntityDescription(

@@ -21,7 +21,6 @@ from homeassistant.exceptions import HomeAssistantError, ConfigEntryAuthFailed
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
@@ -31,13 +30,7 @@ from homeassistant.util import dt as dt_util
 import voluptuous as vol
 from homeassistant.helpers import config_validation as cv
 
-from .const import (
-    CONF_UPDATE_INTERVAL,
-    CUBIC_SECURE_MODEL,
-    DEFAULT_UPDATE_INTERVAL,
-    DOMAIN,
-    MANUFACTURER,
-)
+from .const import CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL, DOMAIN
 from .pylksystems import (
     LKSystemsManager,
     LKSystemsError,
@@ -58,7 +51,7 @@ _LOGGER = logging.getLogger(__name__)
 CONSECUTIVE_FAILURE_THRESHOLD = 3
 
 # Define the platforms we support
-PLATFORMS = [Platform.SENSOR, Platform.CLIMATE, Platform.NUMBER, Platform.BUTTON]
+PLATFORMS = [Platform.SENSOR, Platform.CLIMATE]
 
 
 class LkStructureResp(TypedDict):
@@ -236,12 +229,6 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         self._entry_id = entry.entry_id
         self.last_successful_cloud_fetch: datetime | None = None
         self._consecutive_failures = 0
-
-        # How long the next "Pause Leak Detection" button press should pause
-        # for, per Cubic Secure device serial number. A local preference
-        # (not fetched from the API), set by number.py and read by
-        # button.py.
-        self.pause_leak_detection_seconds: dict[str, int] = {}
 
         # Initialize coordinator with update interval
         super().__init__(
@@ -831,30 +818,6 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         except LKSystemsError as err:
             _LOGGER.error("LK Systems error during update: %s", str(err))
             raise UpdateFailed(str(err)) from err
-
-
-def cubic_secure_device_identities(coordinator: LKSystemCoordinator) -> list[str]:
-    """Return the device identities of every Cubic Secure device on the account."""
-    return list(coordinator.data.get("cubic_devices", {}))
-
-
-def cubic_secure_device_info(
-    coordinator: LKSystemCoordinator, device_identity: str
-) -> DeviceInfo:
-    """Build the shared DeviceInfo for a Cubic Secure device.
-
-    Every platform with an entity on a Cubic Secure device (sensor,
-    number, button, ...) calls this, so they all resolve to the same HA
-    device instead of each building their own copy.
-    """
-    machine_info = coordinator.data["cubic_devices"][device_identity]["machine_info"]
-    return DeviceInfo(
-        identifiers={(DOMAIN, device_identity)},
-        manufacturer=MANUFACTURER,
-        model=CUBIC_SECURE_MODEL,
-        name=f"Cubic Secure {machine_info['zone']['zoneName']}",
-        serial_number=device_identity,
-    )
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
