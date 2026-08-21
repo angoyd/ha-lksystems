@@ -28,15 +28,17 @@ from homeassistant.helpers.update_coordinator import (
 )
 import homeassistant.util.dt as dt_util
 
-from . import LKSystemCoordinator, cubic_secure_device_info
+from . import LKSystemCoordinator
 from .const import (
     ATTRIBUTION,
     C_NEXT_UPDATE_TIME,
     C_UPDATE_TIME,
+    CUBIC_SECURE_MODEL,
     DOMAIN,
     INTEGRATION_NAME,
     LK_CUBICSECURE_SENSORS,
     LK_CUBICSECURE_CONFIG_SENSORS,
+    MANUFACTURER,
 )
 from .restore import RestoredNativeValueMixin, last_successful_cloud_fetch_attributes
 
@@ -934,7 +936,12 @@ class AbstractLkCubicSensor(
         _LOGGER.debug("Creating %s sensor", description.name)
         super().__init__(coordinator)
         self._coordinator = coordinator
+        self._device_model = CUBIC_SECURE_MODEL
         self._id = device_identity
+        machine_info = coordinator.data["cubic_devices"][device_identity][
+            "machine_info"
+        ]
+        self._device_name = f"Cubic Secure {machine_info['zone']['zoneName']}"
         self.entity_description = description
         self.native_unit_of_measurement = description.native_unit_of_measurement
         self._attr_unique_id = f"LkUid_{description.key}_{device_identity}"
@@ -943,7 +950,14 @@ class AbstractLkCubicSensor(
     @property
     def device_info(self) -> DeviceInfo:
         """Return the device_info of the device."""
-        return cubic_secure_device_info(self.coordinator, self._id)
+        device_info = DeviceInfo(
+            identifiers={(DOMAIN, self._id)},
+            manufacturer=MANUFACTURER,
+            model=self._device_model,
+            name=self._device_name,
+            serial_number=self._id,
+        )
+        return device_info
 
 
 class LKCubicSensor(AbstractLkCubicSensor):
