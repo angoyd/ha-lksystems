@@ -251,6 +251,17 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             update_interval=timedelta(minutes=update_interval_minutes),
         )
 
+    @property
+    def entry(self) -> ConfigEntry:
+        """Return the config entry this coordinator was set up from.
+
+        Lets entities that need it (to call an API function directly,
+        outside the coordinator's own methods) reach it through the
+        coordinator they already hold, rather than each entity taking and
+        storing its own separate copy.
+        """
+        return self._entry
+
     async def set_thermostat_temperature(self, device_id, temperature):
         """Set thermostat temperature through the API.
 

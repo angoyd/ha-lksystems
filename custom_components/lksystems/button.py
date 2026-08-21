@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-import logging
-
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import LKSystemCoordinator, cubic_secure_device_identities, cubic_secure_device_info
 from .const import ATTRIBUTION, DEFAULT_PAUSE_LEAK_DETECTION_SECONDS, DOMAIN
-
-_LOGGER = logging.getLogger(__name__)
+from .services import pause_leak_detection_for_serial
 
 
 async def async_setup_entry(
@@ -34,11 +30,10 @@ class LKPauseLeakDetectionButton(ButtonEntity):
 
     A one-tap dashboard alternative to calling the pause_leak_detection
     service by hand - e.g. before starting a manual watering session, or
-    wired into an irrigation automation. Delegates to that same service
-    (rather than duplicating its login/error-handling) using whichever
-    duration is currently set on the device's "Pause Leak Detection
-    Duration" number entity. Doesn't subclass CoordinatorEntity: pressing
-    it has nothing to do with coordinator polls.
+    wired into an irrigation automation - using whichever duration is
+    currently set on the device's "Pause Leak Detection Duration" number
+    entity. Doesn't subclass CoordinatorEntity: pressing it has nothing
+    to do with coordinator polls.
     """
 
     _attr_attribution = ATTRIBUTION
@@ -59,22 +54,9 @@ class LKPauseLeakDetectionButton(ButtonEntity):
 
     async def async_press(self) -> None:
         """Pause leak detection for this device's configured duration."""
-        device_entry = dr.async_get(self.hass).async_get_device(
-            identifiers={(DOMAIN, self._device_identity)}
-        )
-        if device_entry is None:
-            _LOGGER.error(
-                "No registered device found for %s, cannot pause leak detection",
-                self._device_identity,
-            )
-            return
-
         seconds = self.coordinator.pause_leak_detection_seconds.get(
             self._device_identity, DEFAULT_PAUSE_LEAK_DETECTION_SECONDS
         )
-        await self.hass.services.async_call(
-            DOMAIN,
-            "pause_leak_detection",
-            {"device_id": device_entry.id, "seconds": seconds},
-            blocking=True,
+        await pause_leak_detection_for_serial(
+            self.coordinator.entry, self._device_identity, seconds
         )

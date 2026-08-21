@@ -18,6 +18,7 @@ from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.lksystems.const import DOMAIN
+from custom_components.lksystems.services import pause_leak_detection_for_serial
 
 from .conftest import CUBIC_IDENTITY, patch_services_manager
 
@@ -78,6 +79,59 @@ async def test_pause_leak_detection_calls_client(hass, fake_manager):
         CUBIC_IDENTITY,
         1800,
     ) in fake_manager.calls
+
+
+async def test_pause_leak_detection_logs_its_own_action(hass, fake_manager, caplog):
+    """Regression test: the handler used to log "Closing valve %s",
+    copy-pasted from close_valve and never updated."""
+    _, device_entry = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+
+    with patch_services_manager(fake_manager), caplog.at_level("INFO"):
+        await hass.services.async_call(
+            DOMAIN,
+            "pause_leak_detection",
+            {"device_id": device_entry.id, "seconds": 1800},
+            blocking=True,
+        )
+
+    assert "closing valve" not in caplog.text.lower()
+    assert "pausing leak detection" in caplog.text.lower()
+
+
+def _bare_entry() -> MockConfigEntry:
+    """A config entry with just the credentials pause_leak_detection_for_serial
+    needs - unlike _setup_entry_and_get_cubic_device()'s entry, this one is
+    never added to hass, since these tests call the function directly rather
+    than through a service call.
+    """
+    return MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_USERNAME: "user@example.com", CONF_PASSWORD: "hunter2"},
+    )
+
+
+class TestPauseLeakDetectionForSerial:
+    """Direct tests for pause_leak_detection_for_serial (see its own
+    docstring for why it's called directly rather than only through the
+    service)."""
+
+    async def test_calls_the_client(self, fake_manager):
+        with patch_services_manager(fake_manager):
+            await pause_leak_detection_for_serial(_bare_entry(), CUBIC_IDENTITY, 1800)
+
+        assert (
+            "cubic_secure_pause_leak_detection",
+            CUBIC_IDENTITY,
+            1800,
+        ) in fake_manager.calls
+
+    async def test_login_failure_does_not_raise(self, fake_manager):
+        fake_manager.login_result = False
+
+        with patch_services_manager(fake_manager):
+            await pause_leak_detection_for_serial(_bare_entry(), CUBIC_IDENTITY, 1800)
+
+        assert not any(c[0] == "cubic_secure_pause_leak_detection" for c in fake_manager.calls)
 
 
 async def test_set_pressure_test_schedule_calls_client(hass, fake_manager):

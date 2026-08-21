@@ -9,6 +9,7 @@ from homeassistant.helpers import (
 )
 
 from .const import (
+    DEFAULT_PAUSE_LEAK_DETECTION_SECONDS,
     DOMAIN,
 )
 
@@ -29,27 +30,41 @@ def _get_serial_number(hass: HomeAssistant, device_id: str) -> str | None:
     return device_entry.serial_number
 
 
+async def pause_leak_detection_for_serial(
+    entry: ConfigEntry, serial_number: str, seconds: int
+) -> None:
+    """Log in and pause leak detection for one device.
+
+    Shared by the pause_leak_detection service handler below (which
+    resolves a device_id to a serial number first) and button.py's "Pause
+    Leak Detection" button, which already has the serial number and would
+    otherwise have to round-trip it through the device registry into a
+    device_id just to go through the service call layer.
+    """
+    _LOGGER.info("Pausing leak detection for %s for %s seconds", serial_number, seconds)
+    try:
+        username = entry.data.get(CONF_USERNAME)
+        password = entry.data.get(CONF_PASSWORD)
+
+        async with LKSystemsManager(username, password) as lk_inst:
+            if not await lk_inst.login():
+                _LOGGER.error("Failed to login, abort update")
+                raise Exception("Failed to login")
+            await lk_inst.cubic_secure_pause_leak_detection(serial_number, seconds)
+    except Exception as e:
+        _LOGGER.error("Error pausing leak detection: %s", e)
+
+
 async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
     @callback
     async def pause_leak_detection(call: ServiceCall) -> None:
         """Handle the service action call."""
         device_id = call.data.get("device_id")
-        seconds = int(call.data.get("seconds", 3600))
+        seconds = int(call.data.get("seconds", DEFAULT_PAUSE_LEAK_DETECTION_SECONDS))
         sn = _get_serial_number(hass, device_id)
         if not sn:
             return
-        _LOGGER.info(f"Closing valve {sn}")
-        try:
-            username = entry.data.get(CONF_USERNAME)
-            password = entry.data.get(CONF_PASSWORD)
-
-            async with LKSystemsManager(username, password) as lk_inst:
-                if not await lk_inst.login():
-                    _LOGGER.error("Failed to login, abort update")
-                    raise Exception("Failed to login")
-                await lk_inst.cubic_secure_pause_leak_detection(sn, seconds)
-        except Exception as e:
-            _LOGGER.error("Error closing valve: %s", e)
+        await pause_leak_detection_for_serial(entry, sn, seconds)
 
     @callback
     async def close_valve(call: ServiceCall) -> None:
