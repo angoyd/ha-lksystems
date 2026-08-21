@@ -92,8 +92,7 @@ class TestGetUserStructure:
     async def test_empty_list_response_does_not_raise(self, manager):
         """Account with no devices/realestates: API returns `[]`.
 
-        Regression test for issue #30 - this used to raise
-        `IndexError: list index out of range`.
+        This used to raise `IndexError: list index out of range`.
         """
         manager.userid = "user-123"
 

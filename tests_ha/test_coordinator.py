@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -30,6 +32,7 @@ from custom_components.lksystems.const import (
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
 )
+from custom_components.lksystems.repairs import _issue_id
 
 from .conftest import (
     CUBIC_IDENTITY,
@@ -38,6 +41,7 @@ from .conftest import (
     HUB_IDENTITY,
     SENSOR_MAC,
     THERMOSTAT_MAC,
+    get_issue,
 )
 
 
@@ -106,6 +110,19 @@ class TestCoordinatorConstruction:
         assert coordinator.update_interval == timedelta(
             minutes=DEFAULT_UPDATE_INTERVAL
         )
+
+    async def test_construction_does_not_log_above_debug(self, hass, caplog):
+        # Setting up the coordinator's update interval is routine, expected
+        # behaviour on every startup/reload - it shouldn't show up in a
+        # user's log unless they've turned on debug logging.
+        entry = _make_entry(hass)
+
+        with caplog.at_level(
+            logging.WARNING, logger="custom_components.lksystems"
+        ):
+            LKSystemCoordinator(hass, entry)
+
+        assert caplog.records == []
 
 
 class TestAsyncUpdateData:
@@ -196,6 +213,97 @@ class TestAsyncUpdateData:
 
         assert ("login",) in fake_manager.calls
         assert TOKEN_STORAGE[entry.entry_id]["jwt"] == "fake-jwt-token"
+
+
+class TestRepairIssues:
+    """A failed update should surface as a repair issue instead of only a
+    log line - auth failures immediately (HA's own reauth flow already
+    treats them as non-transient), fetch failures only after
+    CONSECUTIVE_FAILURE_THRESHOLD in a row (a single failure is routine and
+    resolves on its own via the next scheduled poll)."""
+
+    async def test_auth_failure_raises_a_repair_issue(self, hass):
+        entry = MockConfigEntry(domain=DOMAIN, data={})
+        entry.add_to_hass(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with pytest.raises(ConfigEntryAuthFailed):
+            await coordinator._async_update_data()
+
+        assert get_issue(hass, _issue_id("auth_failed", entry.entry_id)) is not None
+
+    async def test_successful_update_clears_the_auth_failed_issue(
+        self, hass, fake_manager
+    ):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            _issue_id("auth_failed", entry.entry_id),
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="auth_failed",
+        )
+
+        with _patch_manager(fake_manager):
+            await coordinator._async_update_data()
+
+        assert get_issue(hass, _issue_id("auth_failed", entry.entry_id)) is None
+
+    async def test_single_fetch_failure_does_not_raise_a_persistent_issue(
+        self, hass, fake_manager
+    ):
+        fake_manager.get_user_structure_result = False
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            with pytest.raises(UpdateFailed):
+                await coordinator._async_update_data()
+
+        assert (
+            get_issue(hass, _issue_id("persistent_update_failure", entry.entry_id))
+            is None
+        )
+
+    async def test_consecutive_fetch_failures_raise_a_persistent_issue(
+        self, hass, fake_manager
+    ):
+        fake_manager.get_user_structure_result = False
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            for _ in range(3):
+                with pytest.raises(UpdateFailed):
+                    await coordinator._async_update_data()
+
+        assert (
+            get_issue(hass, _issue_id("persistent_update_failure", entry.entry_id))
+            is not None
+        )
+
+    async def test_successful_update_after_failures_clears_the_persistent_issue(
+        self, hass, fake_manager
+    ):
+        fake_manager.get_user_structure_result = False
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            for _ in range(3):
+                with pytest.raises(UpdateFailed):
+                    await coordinator._async_update_data()
+
+        fake_manager.get_user_structure_result = True
+        with _patch_manager(fake_manager):
+            await coordinator._async_update_data()
+
+        assert (
+            get_issue(hass, _issue_id("persistent_update_failure", entry.entry_id))
+            is None
+        )
 
 
 class TestCubicFetchFailureFallback:
@@ -381,3 +489,47 @@ class TestSetThermostatTemperature:
             )
 
         assert result is False
+
+    async def test_logs_in_before_calling_the_api(self, hass, fake_manager):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            result = await coordinator.set_thermostat_temperature(
+                THERMOSTAT_MAC, 225
+            )
+
+        assert result is True
+        call_names = [call[0] for call in fake_manager.calls]
+        assert call_names.index("login") < call_names.index(
+            "set_thermostat_temperature"
+        )
+
+    async def test_login_failure_returns_false(self, hass, fake_manager):
+        fake_manager.login_result = False
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            result = await coordinator.set_thermostat_temperature(
+                THERMOSTAT_MAC, 225
+            )
+
+        assert result is False
+
+    async def test_reuses_stored_valid_token(self, hass, fake_manager):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+        TOKEN_STORAGE[entry.entry_id] = {
+            "jwt": _make_token(3600),
+            "refresh": "stored-refresh-token",
+            "expiry": dt_util.utcnow().timestamp() + 3600,
+        }
+
+        with _patch_manager(fake_manager):
+            result = await coordinator.set_thermostat_temperature(
+                THERMOSTAT_MAC, 225
+            )
+
+        assert result is True
+        assert ("login",) not in fake_manager.calls

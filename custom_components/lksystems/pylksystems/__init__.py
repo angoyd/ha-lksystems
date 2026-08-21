@@ -108,12 +108,13 @@ class LKThresholds(TypedDict):
 class LKSystemsManager:
     """LKSystems manager."""
 
+    BASE_URL = "https://link2.lk.nu/"
+
     def __init__(self, username, password) -> None:
         """Initialize the LK systems manager."""
         if username is None or password is None:
             raise ValueError("Username and password must be provided.")
         self.session = None
-        self.base_url = "https://link2.lk.nu/"
         self.username = username
         self.password = password
         self.userid = None
@@ -152,13 +153,13 @@ class LKSystemsManager:
             # (e.g. set_device_temperature()) land here on the first 429.
             _LOGGER.warning(
                 "Rate limited (429) by LK Systems API. URL: %s",
-                self.base_url + endpoint,
+                self.BASE_URL + endpoint,
             )
             return False
 
         _LOGGER.error(
             "An error occurred during the request. URL: %s, Headers: %s. Error: %s",
-            self.base_url + endpoint,
+            self.BASE_URL + endpoint,
             _redact_headers(headers),
             error,
         )
@@ -179,7 +180,7 @@ class LKSystemsManager:
         """Log and wait out a 429's backoff before the next retry attempt."""
         _LOGGER.warning(
             "Rate limited (429) by LK Systems API, retrying %s in %.1fs (attempt %d/%d)",
-            self.base_url + endpoint,
+            self.BASE_URL + endpoint,
             delay,
             attempt + 1,
             RATE_LIMIT_MAX_RETRIES,
@@ -199,7 +200,7 @@ class LKSystemsManager:
                 }
 
                 async with self.session.get(
-                    self.base_url + endpoint, headers=headers
+                    self.BASE_URL + endpoint, headers=headers
                 ) as response:
                     delay = _retry_delay_for_response(response, attempt)
                     if delay is None:
@@ -211,7 +212,7 @@ class LKSystemsManager:
 
                         _LOGGER.error(
                             "Obtaining data from URL %s failed with status code %d",
-                            self.base_url + endpoint,
+                            self.BASE_URL + endpoint,
                             response.status,
                         )
                         return False, None
@@ -238,7 +239,7 @@ class LKSystemsManager:
                 }
 
                 async with self.session.post(
-                    self.base_url + endpoint, json=payload, headers=headers
+                    self.BASE_URL + endpoint, json=payload, headers=headers
                 ) as response:
                     delay = _retry_delay_for_response(response, attempt)
                     if delay is None:
@@ -250,7 +251,7 @@ class LKSystemsManager:
 
                         _LOGGER.error(
                             "Posting data to URL %s failed with status code %d",
-                            self.base_url + endpoint,
+                            self.BASE_URL + endpoint,
                             response.status,
                         )
                         return False, None
@@ -270,7 +271,7 @@ class LKSystemsManager:
             headers = {**self._get_headers()}
             # Define headers with the encoded credentials
             async with self.session.post(
-                self.base_url + endpoint, json=payload, headers=headers
+                self.BASE_URL + endpoint, json=payload, headers=headers
             ) as response:
                 data = await response.json()
                 if response.status == 200:
@@ -282,7 +283,7 @@ class LKSystemsManager:
                         "authorization": f"Bearer {self.jwt_token}",
                     }
                     async with self.session.get(
-                        self.base_url + endpointUserId, headers=headers
+                        self.BASE_URL + endpointUserId, headers=headers
                     ) as responseUserid:
                         responseUserid.raise_for_status()
                         if responseUserid.status == 200:
@@ -292,7 +293,7 @@ class LKSystemsManager:
 
                         _LOGGER.error(
                             "Obtaining data from URL %s failed with status code %d",
-                            self.base_url + endpoint,
+                            self.BASE_URL + endpoint,
                             responseUserid.status,
                         )
                         return False
@@ -450,7 +451,7 @@ class LKSystemsManager:
 
             _LOGGER.debug("Fetching detailed device information from API")
             async with self.session.get(
-                self.base_url + endpoint, headers=headers
+                self.BASE_URL + endpoint, headers=headers
             ) as response:
                 response.raise_for_status()
                 if response.status == 200:
@@ -546,7 +547,7 @@ class LKSystemsManager:
 
                 _LOGGER.error(
                     "Obtaining devices data from URL %s failed with status code %d",
-                    self.base_url + endpoint,
+                    self.BASE_URL + endpoint,
                     response.status,
                 )
                 # Even if API call fails, return True if we have devices from structure
@@ -587,7 +588,7 @@ class LKSystemsManager:
             }
 
             async with self.session.get(
-                self.base_url + endpoint, headers=headers
+                self.BASE_URL + endpoint, headers=headers
             ) as response:
                 response.raise_for_status()
                 if response.status == 200:
@@ -597,7 +598,7 @@ class LKSystemsManager:
 
                 _LOGGER.error(
                     "Obtaining hub devices from URL %s failed with status code %d",
-                    self.base_url + endpoint,
+                    self.BASE_URL + endpoint,
                     response.status,
                 )
                 return False
@@ -631,7 +632,7 @@ class LKSystemsManager:
             )
 
             async with self.session.get(
-                self.base_url + endpoint, headers=headers
+                self.BASE_URL + endpoint, headers=headers
             ) as response:
                 response.raise_for_status()
                 if response.status == 200:
@@ -646,7 +647,7 @@ class LKSystemsManager:
 
                 _LOGGER.error(
                     "Obtaining Arc Sense measurement from URL %s failed with status code %d",
-                    self.base_url + endpoint,
+                    self.BASE_URL + endpoint,
                     response.status,
                 )
                 return False
@@ -675,7 +676,7 @@ class LKSystemsManager:
             )
 
             async with self.session.get(
-                self.base_url + endpoint, headers=headers
+                self.BASE_URL + endpoint, headers=headers
             ) as response:
                 response.raise_for_status()
                 if response.status == 200:
@@ -690,7 +691,7 @@ class LKSystemsManager:
 
                 _LOGGER.error(
                     "Obtaining Arc Sense configuration from URL %s failed with status code %d",
-                    self.base_url + endpoint,
+                    self.BASE_URL + endpoint,
                     response.status,
                 )
                 return False
@@ -723,7 +724,7 @@ class LKSystemsManager:
             # _LOGGER.info("Fetching measurement data for device %s", device_identity)
 
             async with self.session.get(
-                self.base_url + endpoint, headers=headers
+                self.BASE_URL + endpoint, headers=headers
             ) as response:
                 response.raise_for_status()
                 if response.status == 200:
@@ -736,7 +737,7 @@ class LKSystemsManager:
 
                 _LOGGER.error(
                     "Obtaining device measurement from URL %s failed with status code %d",
-                    self.base_url + endpoint,
+                    self.BASE_URL + endpoint,
                     response.status,
                 )
                 return False
@@ -769,7 +770,7 @@ class LKSystemsManager:
             _LOGGER.debug("Fetching configuration data for device %s", device_identity)
 
             async with self.session.get(
-                self.base_url + endpoint, headers=headers
+                self.BASE_URL + endpoint, headers=headers
             ) as response:
                 response.raise_for_status()
                 if response.status == 200:
@@ -778,7 +779,7 @@ class LKSystemsManager:
 
                 _LOGGER.error(
                     "Obtaining device configuration from URL %s failed with status code %d",
-                    self.base_url + endpoint,
+                    self.BASE_URL + endpoint,
                     response.status,
                 )
                 return False
@@ -805,7 +806,7 @@ class LKSystemsManager:
             _LOGGER.debug("Fetching title data for device %s", device_identity)
 
             async with self.session.get(
-                self.base_url + endpoint, headers=headers
+                self.BASE_URL + endpoint, headers=headers
             ) as response:
                 response.raise_for_status()
                 if response.status == 200:
@@ -817,7 +818,7 @@ class LKSystemsManager:
 
                 _LOGGER.error(
                     "Obtaining device title from URL %s failed with status code %d",
-                    self.base_url + endpoint,
+                    self.BASE_URL + endpoint,
                     response.status,
                 )
                 return False
@@ -884,7 +885,7 @@ class LKSystemsManager:
                 )
 
                 async with self.session.post(
-                    self.base_url + endpoint, json=update_data, headers=headers
+                    self.BASE_URL + endpoint, json=update_data, headers=headers
                 ) as response:
                     response.raise_for_status()
                     if response.status == 200:
