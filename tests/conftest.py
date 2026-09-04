@@ -6,7 +6,9 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import aiohttp.connector
 import pytest
+from aiohttp import ThreadedResolver
 
 # The pylksystems client is a plain aiohttp-based module with no Home
 # Assistant dependency, but it lives inside the `custom_components.lksystems`
@@ -37,6 +39,19 @@ pylksystems = _load_pylksystems()
 
 def _new_manager():
     return pylksystems.LKSystemsManager("user@example.com", "hunter2")
+
+
+@pytest.fixture(autouse=True)
+def _use_threaded_dns_resolver(monkeypatch):
+    """Make every ClientSession in this suite use aiohttp's threaded resolver.
+
+    aiohttp otherwise defaults to the aiodns-backed resolver, whose pycares
+    channel spawns a permanent daemon thread the first time it is torn
+    down. That happens even for a fully-mocked session that never performs
+    a real lookup, and the thread outlives the test, so
+    pytest-homeassistant-custom-component's leaked-thread check flags it.
+    """
+    monkeypatch.setattr(aiohttp.connector, "DefaultResolver", ThreadedResolver)
 
 
 @pytest.fixture
