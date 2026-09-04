@@ -803,45 +803,52 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         for device_identity in list(self._valve_action_unsub):
             self._cancel_valve_action_confirmation(device_identity)
 
+    async def _apply_cubic_secure_configuration(
+        self, lk_inst: LKSystemsManager, device_identity: str, *, force_update: bool
+    ) -> bool:
+        """Fetch one Cubic Secure device's configuration via `lk_inst` (an
+        already-authenticated client) and publish it.
+
+        Shared by every variant below - see their own docstrings for which
+        to use when.
+        """
+        success = await lk_inst.get_cubic_secure_configuration(
+            device_identity, force_update=force_update
+        )
+
+        if success and self.data:
+            self.data["cubic_devices"][device_identity]["configuration"] = (
+                lk_inst.cubic_secure_configuration
+            )
+            # Deliberately doesn't call
+            # _reconcile_leak_detection_paused_until() here: some callers
+            # of this method (a pause/resume, an open/close) reach it
+            # right after HA itself just wrote something, and the cached
+            # response can still be serving a pre-write snapshot for tens
+            # of seconds - confirmed empirically against the real API -
+            # reconciling off it there would race the explicit
+            # set_leak_detection_paused_until() call the caller already
+            # made and undo it. Reconciliation instead happens at each
+            # call site once it's independently established that enough
+            # time has passed for the cached read to be trustworthy: the
+            # regular poll (_fetch_data) isn't tied to a just-made write,
+            # and the leak-detection expiry check
+            # (_schedule_leak_detection_expiry_refresh) only ever calls
+            # this at or after a pause's own target end time.
+            self.async_set_updated_data(self.data)
+
+        return success
+
     async def _update_cubic_secure_configuration(
         self, device_identity: str, *, force_update: bool
     ) -> bool:
-        """Fetch one Cubic Secure device's configuration and publish it.
-
-        Shared implementation for the two variants below - see their own
-        docstrings for which to use when.
-        """
+        """Fetch one Cubic Secure device's configuration, opening its own
+        authenticated session first."""
         try:
             async with self._authenticated_client() as lk_inst:
-                success = await lk_inst.get_cubic_secure_configuration(
-                    device_identity, force_update=force_update
+                return await self._apply_cubic_secure_configuration(
+                    lk_inst, device_identity, force_update=force_update
                 )
-
-                if success and self.data:
-                    self.data["cubic_devices"][device_identity]["configuration"] = (
-                        lk_inst.cubic_secure_configuration
-                    )
-                    # Deliberately doesn't call
-                    # _reconcile_leak_detection_paused_until() here: some
-                    # callers of this method (a pause/resume, an
-                    # open/close) reach it right after HA itself just
-                    # wrote something, and the cached response can still
-                    # be serving a pre-write snapshot for tens of seconds
-                    # - confirmed empirically against the real API -
-                    # reconciling off it there would race the explicit
-                    # set_leak_detection_paused_until() call the caller
-                    # already made and undo it. Reconciliation instead
-                    # happens at each call site once it's independently
-                    # established that enough time has passed for the
-                    # cached read to be trustworthy: the regular poll
-                    # (_fetch_data) isn't tied to a just-made write, and
-                    # the leak-detection expiry check
-                    # (_schedule_leak_detection_expiry_refresh) only ever
-                    # calls this at or after a pause's own target end time.
-                    self.async_set_updated_data(self.data)
-
-                return success
-
         except _LoginFailed:
             _LOGGER.error("Login failed when updating Cubic Secure configuration")
             return False
@@ -885,6 +892,21 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         )
         return await self._update_cubic_secure_configuration(
             device_identity, force_update=False
+        )
+
+    async def refresh_cubic_secure_configuration_with_client(
+        self, lk_inst: LKSystemsManager, device_identity: str
+    ) -> bool:
+        """Like refresh_cubic_secure_configuration(), but reusing an
+        already-authenticated `lk_inst` instead of opening a new session -
+        for a caller that just used it for a write and wants to confirm
+        that write with a read, at the cost of one login rather than two.
+        """
+        _LOGGER.debug(
+            "Refreshing configuration for Cubic Secure device %s", device_identity
+        )
+        return await self._apply_cubic_secure_configuration(
+            lk_inst, device_identity, force_update=False
         )
 
     async def _async_update_data(self) -> LkStructureResp:

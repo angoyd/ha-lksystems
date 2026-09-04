@@ -45,11 +45,16 @@ async def pause_leak_detection_for_serial(
     success, rather than leaving either to the next scheduled poll -
     living here means every caller gets that, not just whichever one
     remembers to ask for it.
+
+    Confirms the write by reusing the same session for the follow-up read
+    (coordinator.refresh_cubic_secure_configuration_with_client()) rather
+    than opening a second one just for that.
     """
     _LOGGER.info("Pausing leak detection for %s for %s seconds", serial_number, seconds)
     try:
         username = entry.data.get(CONF_USERNAME)
         password = entry.data.get(CONF_PASSWORD)
+        coordinator = hass.data[DOMAIN][entry.entry_id]
 
         async with LKSystemsManager(username, password) as lk_inst:
             if not await lk_inst.login():
@@ -57,9 +62,10 @@ async def pause_leak_detection_for_serial(
                 raise Exception("Failed to login")
             await lk_inst.cubic_secure_pause_leak_detection(serial_number, seconds)
 
-        coordinator = hass.data[DOMAIN][entry.entry_id]
-        coordinator.set_leak_detection_paused_until(serial_number, seconds)
-        await coordinator.refresh_cubic_secure_configuration(serial_number)
+            coordinator.set_leak_detection_paused_until(serial_number, seconds)
+            await coordinator.refresh_cubic_secure_configuration_with_client(
+                lk_inst, serial_number
+            )
     except Exception as e:
         _LOGGER.error("Error pausing leak detection: %s", e)
 

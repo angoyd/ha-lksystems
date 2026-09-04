@@ -173,6 +173,20 @@ class TestPauseLeakDetectionForSerial:
 
         assert CUBIC_IDENTITY not in coordinator.leak_detection_paused_until
 
+    async def test_reuses_one_session_for_the_write_and_its_confirmation_read(
+        self, hass, fake_manager
+    ):
+        """The write (cubic_secure_pause_leak_detection) and its immediate
+        confirmation read (refresh_cubic_secure_configuration) used to each
+        open their own session - two logins for one logical action."""
+        entry, _ = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+        fake_manager.calls.clear()
+
+        with patch_all_managers(fake_manager):
+            await pause_leak_detection_for_serial(hass, entry, CUBIC_IDENTITY, 1800)
+
+        assert fake_manager.calls.count(("login",)) == 1
+
 
 async def test_set_pressure_test_schedule_calls_client(hass, fake_manager):
     _, device_entry = await _setup_entry_and_get_cubic_device(hass, fake_manager)
