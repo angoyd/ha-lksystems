@@ -318,6 +318,19 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         # the way.
         self.valve_action_pending: dict[str, bool] = {}
 
+        # Device identities queued for a cache-bypassing fetch on the
+        # coordinator's next update, via async_request_forced_refresh()
+        # below. A set rather than a single overwritable value, so two
+        # callers requesting a bypass for two different devices before that
+        # update actually runs both get honored by it, instead of the
+        # second overwriting the first. _fetch_data() snapshots and clears
+        # this in one statement with no `await` in between, so a request
+        # already queued by the time it does that is never lost, and one
+        # that arrives after simply waits for the next update - the same
+        # way a plain async_request_refresh() call arriving mid-update
+        # already behaves.
+        self._force_bypass_device_ids: set[str] = set()
+
         # Initialize coordinator with update interval
         super().__init__(
             hass,
@@ -395,98 +408,50 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             _LOGGER.error("Failed to set temperature: %s", ex)
             return False
 
+    def _apply_device_measurement(self, device_id: str, measurement_data: dict) -> None:
+        """Write a fresh measurement for one Arc device into every place
+        self.data stores it: device_details, the flat devices list, and
+        any hub_data the device belongs to."""
+        device_details = self.data.setdefault("device_details", {})
+        device_details.setdefault(device_id, {})["measurement"] = measurement_data
+
+        for device in self.data.get("devices", []):
+            device_title = device.get("deviceTitle", {})
+            if device.get("mac") == device_id or device_title.get("identity") == device_id:
+                device["measurement"] = measurement_data.copy()
+                break
+
+        for hub_data in self.data.get("hub_data", {}).values():
+            if not isinstance(hub_data, dict):
+                continue
+            for device in hub_data.get("devices", []):
+                if device.get("mac") == device_id:
+                    device["measurement"] = measurement_data.copy()
+
     async def force_device_update(self, device_id: str) -> bool:
-        """Force update for a specific device from API."""
-        _LOGGER.warning("FORCE UPDATE REQUESTED for device %s", device_id)
+        """Force a fresh, cache-bypassing measurement fetch for one Arc
+        device, publishing it immediately rather than waiting for the next
+        regular poll.
+        """
+        _LOGGER.debug("Forcing measurement update for device %s", device_id)
 
         try:
-            # Get credentials
-            username = self._entry.data.get(CONF_USERNAME)
-            password = self._entry.data.get(CONF_PASSWORD)
-
-            async with LKSystemsManager(username, password) as lk_inst:
-                # Use existing token if available
-                stored_tokens = TOKEN_STORAGE.get(self._entry_id, {})
-                stored_jwt = stored_tokens.get("jwt")
-
-                if stored_jwt and is_token_valid(stored_jwt):
-                    lk_inst.jwt_token = stored_jwt
-                    lk_inst.refresh_token = stored_tokens.get("refresh")
-                else:
-                    # Login if no valid token
-                    if not await lk_inst.login():
-                        _LOGGER.error("Login failed when forcing device update")
-                        return False
-
-                    # Store the new tokens
-                    TOKEN_STORAGE[self._entry_id] = {
-                        "jwt": lk_inst.jwt_token,
-                        "refresh": lk_inst.refresh_token,
-                        "expiry": dt_util.utcnow().timestamp() + 3600,
-                    }
-
-                # Always force update for this device
+            async with self._authenticated_client() as lk_inst:
                 success = await lk_inst.get_device_measurement(
                     device_id, force_update=True
                 )
 
-                if success and device_id in lk_inst.device_measurements:
-                    measurement_data = lk_inst.device_measurements[device_id]
-
-                    # Log the raw measurement data
-                    _LOGGER.warning(
-                        "Got fresh data for %s: Temperature=%s, Humidity=%s, Battery=%s",
-                        device_id,
-                        measurement_data.get("currentTemperature"),
-                        measurement_data.get("currentHumidity"),
-                        measurement_data.get("currentBattery"),
+                if success and device_id in lk_inst.device_measurements and self.data:
+                    self._apply_device_measurement(
+                        device_id, lk_inst.device_measurements[device_id]
                     )
-
-                    # Update our local data
-                    if self.data:
-                        # Create device_details dict if not exists
-                        if "device_details" not in self.data:
-                            self.data["device_details"] = {}
-
-                        if device_id not in self.data["device_details"]:
-                            self.data["device_details"][device_id] = {}
-
-                        # Ensure measurement dict exists
-                        if "measurement" not in self.data["device_details"][device_id]:
-                            self.data["device_details"][device_id]["measurement"] = {}
-
-                        # Update with latest data - full replacement to ensure all fields are updated
-                        self.data["device_details"][device_id]["measurement"] = (
-                            measurement_data
-                        )
-
-                        # Also update in devices list
-                        for device in self.data.get("devices", []):
-                            device_title = device.get("deviceTitle", {})
-                            if (
-                                device.get("mac") == device_id
-                                or device_title.get("identity") == device_id
-                            ):
-                                device["measurement"] = measurement_data.copy()
-                                break
-
-                        # Also update any devices in hub_data
-                        if "hub_data" in self.data:
-                            for hub_id, hub_data in self.data["hub_data"].items():
-                                if isinstance(hub_data, dict) and "devices" in hub_data:
-                                    for device in hub_data["devices"]:
-                                        if device.get("mac") == device_id:
-                                            device["measurement"] = (
-                                                measurement_data.copy()
-                                            )
-
-                        # Trigger all listeners to update with new data
-                        self.async_set_updated_data(self.data)
-
-                        return True
+                    self.async_set_updated_data(self.data)
 
                 return success
 
+        except _LoginFailed:
+            _LOGGER.error("Login failed when forcing device update")
+            return False
         except Exception as ex:
             _LOGGER.error("Error during forced device update: %s", ex)
             return False
@@ -519,6 +484,20 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                 }
 
             yield lk_inst
+
+    async def async_request_forced_refresh(self, device_id: str) -> None:
+        """Request a cache-bypassing fetch for one device on the
+        coordinator's next update, then trigger that update.
+
+        Covers data types that have no other bypass entry point - a Cubic
+        Secure device's own measurement (which carries its leak state) and
+        an Arc-sense device's configuration (used for thermostat-role
+        devices). Cubic Secure configuration already has its own dedicated
+        force_cubic_secure_configuration_update(); this is the general
+        primitive behind that gap that one doesn't cover.
+        """
+        self._force_bypass_device_ids.add(device_id)
+        await self.async_request_refresh()
 
     def _pause_end_time(self, seconds: int) -> datetime:
         """Return the (rounded) wall-clock time `seconds` from now."""
@@ -922,6 +901,16 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             repairs.async_clear_all_issues(self.hass, self._entry_id)
             return resp
 
+    def _should_bypass_cache(
+        self, device_identity: str, forced_device_ids: set[str], cache_updated: int
+    ) -> bool:
+        """Whether a cached response for device_identity is stale enough to
+        warrant a fresh, cache-bypassing fetch instead - or a bypass was
+        explicitly requested for it via async_request_forced_refresh()."""
+        if device_identity in forced_device_ids:
+            return True
+        return int(time.time()) - cache_updated > self.update_interval.total_seconds()
+
     async def _fetch_data(self) -> LkStructureResp:  # noqa: C901
         """Fetch the latest data from the source."""
         # Record update time at the beginning of update
@@ -930,6 +919,13 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             "Starting LK Systems data update at %s",
             self._last_cloud_fetch_attempt.isoformat(),
         )
+
+        # Snapshot and clear in one statement (no `await` in between) so a
+        # request queued by async_request_forced_refresh() is either fully
+        # reflected in this fetch or left untouched for the next one - see
+        # _force_bypass_device_ids' own comment for why.
+        forced_device_ids = self._force_bypass_device_ids
+        self._force_bypass_device_ids = set()
 
         try:
             # Get credentials from config entry
@@ -1044,9 +1040,11 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                                         lk_inst.device_measurements.get(device_identity)
                                     )
 
-                                # Fetch configuration data
+                                # Fetch configuration data (used for
+                                # thermostat-role devices by climate.py)
                                 if await lk_inst.get_device_configuration(
-                                    device_identity
+                                    device_identity,
+                                    force_update=device_identity in forced_device_ids,
                                 ):
                                     if device_identity not in resp["device_details"]:
                                         resp["device_details"][device_identity] = {}
@@ -1124,17 +1122,15 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                                 )
 
                                 if lk_inst.cubic_secure_measurement is not None:
-                                    # Get time as unix timestamp
-                                    timestamp = int(time.time())
-                                    if (
-                                        timestamp
-                                        - lk_inst.cubic_secure_measurement[
+                                    if self._should_bypass_cache(
+                                        device_identity,
+                                        forced_device_ids,
+                                        lk_inst.cubic_secure_measurement[
                                             "cacheUpdated"
-                                        ]
-                                        > self.update_interval.total_seconds()
+                                        ],
                                     ):
                                         _LOGGER.debug(
-                                            "Cubic secure measurement is older than update interval, force update"
+                                            "Cubic secure measurement is stale or a fresh fetch was requested, force update"
                                         )
                                         if not await lk_inst.get_cubic_secure_measurement(
                                             device_identity, force_update=True
@@ -1159,17 +1155,15 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                                         "Unknown error get_cubic_secure_measurement"
                                     )
                                 if lk_inst.cubic_secure_configuration is not None:
-                                    # Get time as unix timestamp
-                                    timestamp = int(time.time())
-                                    if (
-                                        timestamp
-                                        - lk_inst.cubic_secure_configuration[
+                                    if self._should_bypass_cache(
+                                        device_identity,
+                                        forced_device_ids,
+                                        lk_inst.cubic_secure_configuration[
                                             "cacheUpdated"
-                                        ]
-                                        > self.update_interval.total_seconds()
+                                        ],
                                     ):
                                         _LOGGER.debug(
-                                            "Cubic secure configuration is older than update interval, force update"
+                                            "Cubic secure configuration is stale or a fresh fetch was requested, force update"
                                         )
                                         # The forced/bypass fetch below polls
                                         # the physical device live rather
