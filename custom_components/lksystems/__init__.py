@@ -240,6 +240,17 @@ def _round_to_nearest_minute(moment: datetime) -> datetime:
     return (moment + timedelta(seconds=30)).replace(second=0, microsecond=0)
 
 
+def _fill_missing_keys(target: dict, fallback: dict) -> None:
+    """Copy every key `fallback` has that `target` doesn't, into `target`.
+
+    For a live/bypass API response whose schema is narrower than the
+    cached one it's replacing - so a cache-only field doesn't just vanish
+    because a caller bypassed the cache.
+    """
+    for key, value in fallback.items():
+        target.setdefault(key, value)
+
+
 class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
     """Data update coordinator for LK Systems."""
 
@@ -1165,18 +1176,8 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                                         _LOGGER.debug(
                                             "Cubic secure configuration is stale or a fresh fetch was requested, force update"
                                         )
-                                        # The forced/bypass fetch below polls
-                                        # the physical device live rather
-                                        # than LK's backend cache, and the
-                                        # device doesn't report muteLeak at
-                                        # all - carry the cached value over
-                                        # so this staleness-triggered force
-                                        # doesn't wipe out a pause that's
-                                        # still running.
-                                        cached_mute_leak = (
-                                            lk_inst.cubic_secure_configuration.get(
-                                                "muteLeak"
-                                            )
+                                        cached_configuration = (
+                                            lk_inst.cubic_secure_configuration
                                         )
                                         if not await lk_inst.get_cubic_secure_configuration(
                                             device_identity, force_update=True
@@ -1187,8 +1188,20 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                                             raise UpdateFailed(
                                                 "Unknown error get_cubic_secure_configuration"
                                             )
-                                        lk_inst.cubic_secure_configuration.setdefault(
-                                            "muteLeak", cached_mute_leak
+                                        # The bypass fetch above polls the
+                                        # physical device live rather than
+                                        # LK's backend cache, and that
+                                        # response has a narrower schema
+                                        # (confirmed empirically: it never
+                                        # carries muteLeak) - carry over
+                                        # whatever the cached response has
+                                        # that the live one doesn't, so a
+                                        # cache-only field doesn't just
+                                        # vanish because this device was
+                                        # bypassed.
+                                        _fill_missing_keys(
+                                            lk_inst.cubic_secure_configuration,
+                                            cached_configuration,
                                         )
 
                                 resp["cubic_devices"][device_identity][

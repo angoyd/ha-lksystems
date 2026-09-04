@@ -446,6 +446,37 @@ class TestCubicConfigurationStalenessForceFetch:
         )
         await coordinator.async_shutdown()  # cancel the expiry check this adopted
 
+    async def test_preserves_any_field_missing_from_the_live_response(
+        self, hass, fake_manager
+    ):
+        """Not just muteLeak - any key the cached response carries that the
+        live/bypass one omits should survive the merge."""
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        stale_cache_updated = (
+            int(time.time()) - int(coordinator.update_interval.total_seconds()) - 60
+        )
+        cached_config = build_cubic_configuration(mute_leak=1200)
+        cached_config["cacheUpdated"] = stale_cache_updated
+        cached_config["pairingCode"] = "abc123"
+        fake_manager.cubic_configurations_cached_by_device[CUBIC_IDENTITY] = (
+            cached_config
+        )
+
+        fake_manager.cubic_configurations_by_device[CUBIC_IDENTITY] = (
+            build_live_config_without_mute_leak()
+        )
+
+        with _patch_manager(fake_manager):
+            data = await coordinator._async_update_data()
+
+        assert (
+            data["cubic_devices"][CUBIC_IDENTITY]["configuration"]["pairingCode"]
+            == "abc123"
+        )
+        await coordinator.async_shutdown()  # cancel the expiry check this adopted
+
 
 class TestMultipleCubicSecureDevices:
     """Two Cubic Secure devices registered under the same property used to
