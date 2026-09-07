@@ -110,7 +110,7 @@ async def test_action_calls_the_client_and_refreshes(
         ("open_valve", "closed", "open"),
     ],
 )
-async def test_resolves_immediately_when_the_write_s_own_confirmation_read_already_shows_it(
+async def test_resolves_immediately_when_confirmation_read_already_matches(
     hass, fake_manager, ha_service, starting_state, resulting_state
 ):
     """The write and its confirmation read share one session (see

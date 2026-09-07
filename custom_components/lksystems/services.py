@@ -18,15 +18,23 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class _ServiceLoginFailed(Exception):
-    """Raised by _authenticated_session() when login fails."""
+    """Raised by _service_write_session() when login fails."""
 
 
 @asynccontextmanager
-async def _authenticated_session(hass: HomeAssistant, entry: ConfigEntry):
+async def _service_write_session(entry: ConfigEntry):
     """Open one logged-in LKSystemsManager session for a service-layer
     write - the shared shape every write below needs (extract
     credentials, open a session, log in), instead of each
     re-implementing its own copy.
+
+    Deliberately always logs in fresh rather than reusing a cached token
+    the way LKSystemCoordinator._authenticated_client() does for the
+    regular poll - these are one-off, user-initiated writes (open/close
+    the valve, change a threshold, ...), where a token that's stale by
+    even a few seconds (e.g. right after a password change) is worth the
+    cost of a fresh login to avoid, unlike a poll that just runs again in
+    a few minutes regardless.
 
     Raises _ServiceLoginFailed if login fails - the caller decides what
     that means for its own return value/error message.
@@ -79,7 +87,7 @@ async def pause_leak_detection_for_serial(
     try:
         coordinator = hass.data[DOMAIN][entry.entry_id]
 
-        async with _authenticated_session(hass, entry) as lk_inst:
+        async with _service_write_session(entry) as lk_inst:
             await lk_inst.cubic_secure_pause_leak_detection(serial_number, seconds)
 
             coordinator.set_leak_detection_paused_until(serial_number, seconds)
@@ -91,27 +99,34 @@ async def pause_leak_detection_for_serial(
 
 
 async def _set_valve_state_for_serial(
-    hass: HomeAssistant, entry: ConfigEntry, serial_number: str, *, close: bool
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    serial_number: str,
+    action: str,
+    write_method_name: str,
 ) -> bool:
-    """Log in, write the valve's requested state, and confirm it by
+    """Log in, write the valve's requested state (by calling
+    `write_method_name` on the session's client), and confirm it by
     reusing the same session for one immediate read - shared body for
     close_valve_for_serial/open_valve_for_serial below.
+
+    Takes the write's method name rather than a bound/unbound method
+    reference: the LKSystemsManager class itself gets replaced with a
+    mock in tests, so resolving the method against the real *instance*
+    each call (via getattr) is what keeps this working under test rather
+    than silently calling through to the wrong object.
 
     Returns whether the write itself was issued (a real login and API
     call happened), not whether the valve has already reached the
     requested state - that's for the caller to check against the
     coordinator data this also just refreshed.
     """
-    action = "Closing" if close else "Opening"
     _LOGGER.info("%s valve %s", action, serial_number)
     try:
         coordinator = hass.data[DOMAIN][entry.entry_id]
 
-        async with _authenticated_session(hass, entry) as lk_inst:
-            if close:
-                await lk_inst.cubic_secure_close_valve(serial_number)
-            else:
-                await lk_inst.cubic_secure_open_valve(serial_number)
+        async with _service_write_session(entry) as lk_inst:
+            await getattr(lk_inst, write_method_name)(serial_number)
             await coordinator.force_cubic_secure_configuration_update_with_client(
                 lk_inst, serial_number
             )
@@ -128,22 +143,23 @@ async def close_valve_for_serial(
 ) -> bool:
     """Close one device's valve.
 
-    Shared by the close_valve service handler below and valve.py's valve
-    entity, which already has the serial number and would otherwise have
-    to round-trip it through the device registry into a device_id just to
-    go through the service call layer. Confirms the write by reusing the
-    same session for the follow-up read
-    (coordinator.force_cubic_secure_configuration_update_with_client())
-    rather than opening a second one just for that.
+    Shared by the close_valve service handler below and callers that
+    already have a serial number and would otherwise have to round-trip
+    it through the device registry into a device_id just to go through
+    the service call layer.
     """
-    return await _set_valve_state_for_serial(hass, entry, serial_number, close=True)
+    return await _set_valve_state_for_serial(
+        hass, entry, serial_number, "Closing", "cubic_secure_close_valve"
+    )
 
 
 async def open_valve_for_serial(
     hass: HomeAssistant, entry: ConfigEntry, serial_number: str
 ) -> bool:
     """Open one device's valve - see close_valve_for_serial's own docstring."""
-    return await _set_valve_state_for_serial(hass, entry, serial_number, close=False)
+    return await _set_valve_state_for_serial(
+        hass, entry, serial_number, "Opening", "cubic_secure_open_valve"
+    )
 
 
 async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -186,7 +202,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
             return
         _LOGGER.info(f"Setting pressure test schedule {sn} to {hour}:{minute}")
         try:
-            async with _authenticated_session(hass, entry) as lk_inst:
+            async with _service_write_session(entry) as lk_inst:
                 await lk_inst.cubic_secure_set_pressure_test_schedule(sn, hour, minute)
         except Exception as e:
             _LOGGER.error("Error setting pressure test schedule: %s", e)
@@ -234,7 +250,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         )
         _LOGGER.info(f"Setting thresholds {sn} to {thresholds}")
         try:
-            async with _authenticated_session(hass, entry) as lk_inst:
+            async with _service_write_session(entry) as lk_inst:
                 await lk_inst.cubic_secure_set_thresholds(sn, thresholds)
         except Exception as e:
             _LOGGER.error("Error setting thresholds: %s", e)

@@ -231,8 +231,8 @@ class TestValveActionForSerial:
         self, hass, fake_manager
     ):
         """The write (cubic_secure_close_valve) and its immediate
-        confirmation read (get_cubic_secure_configuration) used to each
-        open their own session - two logins for one logical action."""
+        confirmation read (get_cubic_secure_configuration) share one
+        session - a single login should cover both."""
         entry, _ = await _setup_entry_and_get_cubic_device(hass, fake_manager)
         fake_manager.calls.clear()
 
