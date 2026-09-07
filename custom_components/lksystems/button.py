@@ -5,12 +5,11 @@ from __future__ import annotations
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import LKSystemCoordinator, cubic_secure_device_identities, cubic_secure_device_info
-from .const import ATTRIBUTION, DEFAULT_PAUSE_LEAK_DETECTION_SECONDS, DOMAIN
+from . import CubicSecureEntityMixin, LKSystemCoordinator, cubic_secure_device_identities
+from .const import DEFAULT_PAUSE_LEAK_DETECTION_SECONDS, DOMAIN
 from .services import pause_leak_detection_for_serial
 
 
@@ -27,11 +26,9 @@ async def async_setup_entry(
     )
 
 
-class _LKCubicSecureButton(ButtonEntity):
+class _LKCubicSecureButton(CubicSecureEntityMixin, ButtonEntity):
     """Shared plumbing for the per-Cubic-Secure-device buttons below."""
 
-    _attr_attribution = ATTRIBUTION
-    _attr_has_entity_name = True
     _unique_id_suffix: str
 
     def __init__(self, coordinator: LKSystemCoordinator, device_identity: str) -> None:
@@ -39,11 +36,6 @@ class _LKCubicSecureButton(ButtonEntity):
         self.coordinator = coordinator
         self._device_identity = device_identity
         self._attr_unique_id = f"LkUid_{self._unique_id_suffix}_{device_identity}"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return the device_info of the device."""
-        return cubic_secure_device_info(self.coordinator, self._device_identity)
 
 
 class LKPauseLeakDetectionButton(_LKCubicSecureButton):

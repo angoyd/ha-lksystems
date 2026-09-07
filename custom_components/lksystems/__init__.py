@@ -35,6 +35,7 @@ import voluptuous as vol
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
+    ATTRIBUTION,
     CONF_UPDATE_INTERVAL,
     CUBIC_SECURE_MODEL,
     CUBIC_SECURE_VALVE_STATE_CLOSED,
@@ -1409,6 +1410,25 @@ def cubic_secure_device_info(
         name=f"Cubic Secure {machine_info['zone']['zoneName']}",
         serial_number=device_identity,
     )
+
+
+class CubicSecureEntityMixin:
+    """Shared identity plumbing for every entity on a Cubic Secure device.
+
+    Mixed in by sensor.py, number.py, and button.py's per-platform base
+    classes, whose self.coordinator and self._device_identity this relies
+    on, so a future change to a Cubic Secure device's attribution/naming/
+    device_info only needs editing here instead of at each platform
+    separately.
+    """
+
+    _attr_attribution = ATTRIBUTION
+    _attr_has_entity_name = True
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device_info of the device."""
+        return cubic_secure_device_info(self.coordinator, self._device_identity)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:

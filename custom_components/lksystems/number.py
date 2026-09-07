@@ -8,13 +8,11 @@ from homeassistant.components.number import NumberDeviceClass, NumberMode, Resto
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util.unit_conversion import DurationConverter
 
-from . import LKSystemCoordinator, cubic_secure_device_identities, cubic_secure_device_info
+from . import CubicSecureEntityMixin, LKSystemCoordinator, cubic_secure_device_identities
 from .const import (
-    ATTRIBUTION,
     DEFAULT_PAUSE_LEAK_DETECTION_SECONDS,
     DOMAIN,
     PAUSE_LEAK_DETECTION_MAX_SECONDS,
@@ -41,7 +39,7 @@ async def async_setup_entry(
     )
 
 
-class LKPauseLeakDetectionDurationNumber(RestoreNumber):
+class LKPauseLeakDetectionDurationNumber(CubicSecureEntityMixin, RestoreNumber):
     """How long the device's "Pause Leak Detection" button should pause for.
 
     A local preference, not fetched from the API - the API only takes a
@@ -63,8 +61,6 @@ class LKPauseLeakDetectionDurationNumber(RestoreNumber):
     own boundary instead, via DurationConverter.
     """
 
-    _attr_attribution = ATTRIBUTION
-    _attr_has_entity_name = True
     _attr_name = "Pause Duration"
     _attr_icon = "mdi:timer-outline"
     _attr_device_class = NumberDeviceClass.DURATION
@@ -80,11 +76,6 @@ class LKPauseLeakDetectionDurationNumber(RestoreNumber):
         self._device_identity = device_identity
         self._attr_unique_id = f"LkUid_pause_leak_detection_duration_{device_identity}"
         self._attr_native_value = _minutes(DEFAULT_PAUSE_LEAK_DETECTION_SECONDS)
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return the device_info of the device."""
-        return cubic_secure_device_info(self.coordinator, self._device_identity)
 
     def _store_duration_minutes(self, minutes: float) -> None:
         """Set the displayed value and push the equivalent seconds

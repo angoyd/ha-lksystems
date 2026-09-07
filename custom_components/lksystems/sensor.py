@@ -29,9 +29,8 @@ from homeassistant.helpers.update_coordinator import (
 )
 import homeassistant.util.dt as dt_util
 
-from . import LKSystemCoordinator, cubic_secure_device_info
+from . import CubicSecureEntityMixin, LKSystemCoordinator
 from .const import (
-    ATTRIBUTION,
     C_NEXT_UPDATE_TIME,
     C_UPDATE_TIME,
     DOMAIN,
@@ -922,12 +921,12 @@ class LKArcHubEntity(RestoredNativeValueMixin, CoordinatorEntity, RestoreSensor)
 
 
 class AbstractLkCubicSensor(
-    RestoredNativeValueMixin, CoordinatorEntity[LKSystemCoordinator], RestoreSensor
+    CubicSecureEntityMixin,
+    RestoredNativeValueMixin,
+    CoordinatorEntity[LKSystemCoordinator],
+    RestoreSensor,
 ):
     """Abstract class for an LK Cubic secure sensor."""
-
-    _attr_attribution = ATTRIBUTION
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -939,21 +938,16 @@ class AbstractLkCubicSensor(
         _LOGGER.debug("Creating %s sensor", description.name)
         super().__init__(coordinator)
         self._coordinator = coordinator
-        self._id = device_identity
+        self._device_identity = device_identity
         self.entity_description = description
         self.native_unit_of_measurement = description.native_unit_of_measurement
         self._attr_unique_id = f"LkUid_{description.key}_{device_identity}"
         self._attr_extra_state_attributes = {}
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return the device_info of the device."""
-        return cubic_secure_device_info(self.coordinator, self._id)
-
     def _cubic_configuration(self) -> dict:
         """Return this device's last-fetched configuration dict."""
         device_data = self._coordinator.data.get("cubic_devices", {}).get(
-            self._id, {}
+            self._device_identity, {}
         )
         return device_data.get("configuration") or {}
 
@@ -1018,7 +1012,7 @@ class LKCubicSensor(AbstractLkCubicSensor):
         """Get the latest state value from the coordinator's live data."""
         value = None
         device_data = self._coordinator.data.get("cubic_devices", {}).get(
-            self._id, {}
+            self._device_identity, {}
         )
 
         if self._data_source == "configuration":
@@ -1081,7 +1075,7 @@ class LKLeakDetectionPausedUntilSensor(AbstractLkCubicSensor):
 
     def _live_native_value(self) -> datetime | None:
         """Get the latest state value from the coordinator's live data."""
-        return self.coordinator.leak_detection_paused_until.get(self._id)
+        return self.coordinator.leak_detection_paused_until.get(self._device_identity)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
