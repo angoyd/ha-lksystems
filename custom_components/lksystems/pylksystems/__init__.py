@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 import re
@@ -41,6 +41,9 @@ RATE_LIMIT_MAX_RETRIES = 3
 RATE_LIMIT_DEFAULT_BACKOFF = 5.0  # seconds, used when no Retry-After header
 RATE_LIMIT_MIN_BACKOFF = 1.0  # seconds; see _rate_limit_backoff() for why
 
+_GET_SUCCESS_STATUSES = frozenset({200})
+_POST_SUCCESS_STATUSES = frozenset({200, 201})
+
 
 def _rate_limit_backoff(response) -> float:
     """Return the delay to wait before retrying a 429 response.
@@ -58,6 +61,37 @@ def _rate_limit_backoff(response) -> float:
         except ValueError:
             pass
     return RATE_LIMIT_DEFAULT_BACKOFF
+
+
+# A 429's Retry-After is server truth, not any one caller's to own - every
+# LKSystemsManager instance in the process constructs its own session, so
+# this cooldown deadline is deliberately module-level rather than an
+# instance attribute. Keyed per endpoint path rather than one global bucket:
+# Azure APIM rate-limit policies are typically scoped per operation, and
+# every 429 observed so far has landed on one specific endpoint, none on
+# others - a single global cooldown would block unrelated endpoints for no
+# reason.
+_rate_limited_until: dict[str, datetime] = {}
+
+
+def _rate_limit_wait_remaining(endpoint: str) -> float:
+    """Return seconds still left on endpoint's shared cooldown, or 0."""
+    deadline = _rate_limited_until.get(endpoint)
+    if deadline is None:
+        return 0.0
+    return max((deadline - datetime.now(timezone.utc)).total_seconds(), 0.0)
+
+
+def _record_rate_limited(endpoint: str, backoff_seconds: float) -> None:
+    """Record a fresh 429's Retry-After as endpoint's shared cooldown."""
+    _rate_limited_until[endpoint] = datetime.now(timezone.utc) + timedelta(
+        seconds=backoff_seconds
+    )
+
+
+def _clear_rate_limit(endpoint: str) -> None:
+    """Clear endpoint's shared cooldown after a successful request."""
+    _rate_limited_until.pop(endpoint, None)
 
 
 def _retry_delay_for_response(response, attempt: int) -> float | None:
@@ -176,91 +210,131 @@ class LKSystemsManager:
             "ocp-apim-subscription-key": "d2d308826cd14e7d92660b28bc7d859c",
         }
 
+    async def _log_and_sleep(self, delay: float, message: str, *args) -> None:
+        """Log a warning and wait out delay - the shared shape behind both
+        a reactive 429 backoff and a pre-emptive shared-cooldown wait."""
+        _LOGGER.warning(message, *args)
+        await asyncio.sleep(delay)
+
     async def _sleep_before_retry(self, endpoint: str, delay: float, attempt: int) -> None:
         """Log and wait out a 429's backoff before the next retry attempt."""
-        _LOGGER.warning(
+        await self._log_and_sleep(
+            delay,
             "Rate limited (429) by LK Systems API, retrying %s in %.1fs (attempt %d/%d)",
             self.BASE_URL + endpoint,
             delay,
             attempt + 1,
             RATE_LIMIT_MAX_RETRIES,
         )
-        await asyncio.sleep(delay)
 
-    async def _get(self, endpoint):
+    async def _wait_out_shared_cooldown(self, endpoint: str, url: str) -> None:
+        """Wait out any cooldown an earlier 429 already recorded for endpoint.
+
+        Checked pre-emptively before firing a request, so a caller that
+        already knows it's cooling down doesn't spend a request to find
+        that out again.
+        """
+        remaining = _rate_limit_wait_remaining(endpoint)
+        if remaining <= 0:
+            return
+        await self._log_and_sleep(
+            remaining,
+            "Endpoint %s is under a shared rate-limit cooldown from an "
+            "earlier request, waiting %.1fs before requesting",
+            url,
+            remaining,
+        )
+
+    async def _request_with_retry(
+        self,
+        endpoint: str,
+        send_request,
+        success_statuses: frozenset[int],
+        parse_response,
+        max_wait: float | None,
+    ):
+        """Shared GET/POST retry loop: honors the endpoint's shared 429
+        cooldown pre-emptively, retries a fresh 429 with backoff up to
+        RATE_LIMIT_MAX_RETRIES, and records/clears that shared cooldown
+        from what this call itself observes.
+
+        When max_wait is given, the whole call - any pre-emptive wait plus
+        any retries - is capped to that many seconds; running out of budget
+        is treated like any other failed fetch and never touches the shared
+        cooldown, which is real server-side state for whoever asks next.
+        """
+        url = self.BASE_URL + endpoint
+
+        async def attempt() -> tuple[bool, dict | None]:
+            await self._wait_out_shared_cooldown(endpoint, url)
+            headers = {}
+            retry_attempt = 0
+            while True:
+                try:
+                    headers = {
+                        **self._get_headers(),
+                        "authorization": f"Bearer {self.jwt_token}",
+                    }
+
+                    async with send_request(headers) as response:
+                        if response.status == RATE_LIMIT_STATUS:
+                            _record_rate_limited(
+                                endpoint, _rate_limit_backoff(response)
+                            )
+
+                        delay = _retry_delay_for_response(response, retry_attempt)
+                        if delay is None:
+                            response.raise_for_status()
+                            if response.status in success_statuses:
+                                _clear_rate_limit(endpoint)
+                                return True, await parse_response(response)
+
+                            _LOGGER.error(
+                                "Request to URL %s failed with status code %d",
+                                url,
+                                response.status,
+                            )
+                            return False, None
+
+                    # Deliberately kept outside the `async with` above -
+                    # moving it back in would hold the connection open for
+                    # the whole backoff instead of releasing it first.
+                    await self._sleep_before_retry(endpoint, delay, retry_attempt)
+                    retry_attempt += 1
+
+                except (ClientResponseError, ClientError) as error:
+                    return (
+                        await self.handle_client_error(endpoint, headers, error)
+                    ), None
+
+        try:
+            return await asyncio.wait_for(attempt(), timeout=max_wait)
+        except asyncio.TimeoutError:
+            return False, None
+
+    async def _get(self, endpoint, max_wait: float | None = None):
         """Helper method to perform GET requests."""
-        headers = {}
-        attempt = 0
-        while True:
-            try:
-                # Define headers with the JwtToken
-                headers = {
-                    **self._get_headers(),
-                    "authorization": f"Bearer {self.jwt_token}",
-                }
+        return await self._request_with_retry(
+            endpoint,
+            lambda headers: self.session.get(
+                self.BASE_URL + endpoint, headers=headers
+            ),
+            success_statuses=_GET_SUCCESS_STATUSES,
+            parse_response=lambda response: response.json(),
+            max_wait=max_wait,
+        )
 
-                async with self.session.get(
-                    self.BASE_URL + endpoint, headers=headers
-                ) as response:
-                    delay = _retry_delay_for_response(response, attempt)
-                    if delay is None:
-                        response.raise_for_status()
-                        if response.status == 200:
-                            res = await response.json()
-
-                            return True, res
-
-                        _LOGGER.error(
-                            "Obtaining data from URL %s failed with status code %d",
-                            self.BASE_URL + endpoint,
-                            response.status,
-                        )
-                        return False, None
-
-                # Deliberately kept outside the `async with` above - moving
-                # it back in would hold the connection open for the whole
-                # backoff instead of releasing it first.
-                await self._sleep_before_retry(endpoint, delay, attempt)
-                attempt += 1
-
-            except (ClientResponseError, ClientError) as error:
-                return (await self.handle_client_error(endpoint, headers, error)), None
-
-    async def _post(self, endpoint, payload):
+    async def _post(self, endpoint, payload, max_wait: float | None = None):
         """Helper method to perform POST requests."""
-        headers = {}
-        attempt = 0
-        while True:
-            try:
-                # Define headers with the JwtToken
-                headers = {
-                    **self._get_headers(),
-                    "authorization": f"Bearer {self.jwt_token}",
-                }
-
-                async with self.session.post(
-                    self.BASE_URL + endpoint, json=payload, headers=headers
-                ) as response:
-                    delay = _retry_delay_for_response(response, attempt)
-                    if delay is None:
-                        response.raise_for_status()
-                        if response.status in [200, 201]:
-                            res = await response.json(content_type=None)
-
-                            return True, res
-
-                        _LOGGER.error(
-                            "Posting data to URL %s failed with status code %d",
-                            self.BASE_URL + endpoint,
-                            response.status,
-                        )
-                        return False, None
-
-                await self._sleep_before_retry(endpoint, delay, attempt)
-                attempt += 1
-
-            except (ClientResponseError, ClientError) as error:
-                return (await self.handle_client_error(endpoint, headers, error)), None
+        return await self._request_with_retry(
+            endpoint,
+            lambda headers: self.session.post(
+                self.BASE_URL + endpoint, json=payload, headers=headers
+            ),
+            success_statuses=_POST_SUCCESS_STATUSES,
+            parse_response=lambda response: response.json(content_type=None),
+            max_wait=max_wait,
+        )
 
     async def login(self):
         """Login to LK systems and get userId"""

@@ -14,7 +14,16 @@ import pytest
 from aiohttp import ClientConnectionError
 from aioresponses import aioresponses
 
+import pylksystems
+
 BASE_URL = "https://link2.lk.nu/"
+
+
+@pytest.fixture
+def mock_sleep():
+    """Patch asyncio.sleep so a test never actually waits out a real delay."""
+    with patch("asyncio.sleep", new=AsyncMock()) as mock:
+        yield mock
 
 
 class TestLogin:
@@ -369,19 +378,13 @@ class TestClientSessionTimeout:
         assert timeout.total <= 30
 
 
+@pytest.mark.usefixtures("mock_sleep")
 class TestRateLimitBackoff:
     """LK's cloud API rate-limits (429) during bursts of activity - this is
     an expected, routine condition on LK's end, not a genuine error. The
     client should retry with backoff (honoring Retry-After when present)
     instead of failing immediately, and log at warning rather than error.
     """
-
-    @pytest.fixture(autouse=True)
-    def mock_sleep(self):
-        """Patch asyncio.sleep for every test in this class - none of them
-        should actually wait out a real backoff delay."""
-        with patch("asyncio.sleep", new=AsyncMock()) as mock:
-            yield mock
 
     async def test_429_is_retried_and_eventually_succeeds(self, manager, mock_sleep):
         url = BASE_URL + "service/cubic/secure/cubic-1/measurement/0"
@@ -491,3 +494,144 @@ class TestRateLimitBackoff:
 
         assert result is False
         assert any(record.levelno >= logging.ERROR for record in caplog.records)
+
+
+class TestSharedRateLimitCooldown:
+    """A 429's Retry-After becomes a cooldown deadline for its endpoint,
+    visible to every LKSystemsManager instance in the process - not just
+    the one call that happened to observe it.
+    """
+
+    FORCED_ENDPOINT = "service/cubic/secure/cubic-1/configuration/1"
+    CACHED_ENDPOINT = "service/cubic/secure/cubic-1/configuration/0"
+
+    async def test_429_exhausting_one_instances_retries_still_delays_another(
+        self, manager, other_manager, mock_sleep
+    ):
+        """A caller that exhausts its own retries and gives up must still
+        leave the cooldown it observed for the next caller to see - giving
+        up is not the same as the rate limit having lifted."""
+        url = BASE_URL + self.FORCED_ENDPOINT
+
+        with aioresponses() as m:
+            m.get(url, status=429, headers={"Retry-After": "50"}, repeat=True)
+            async with manager:
+                result = await manager.get_cubic_secure_configuration(
+                    "cubic-1", force_update=True
+                )
+
+        assert result is False
+        mock_sleep.reset_mock()
+
+        with aioresponses() as m:
+            m.get(url, payload={"flow": 2.0}, status=200)
+            async with other_manager:
+                result = await other_manager.get_cubic_secure_configuration(
+                    "cubic-1", force_update=True
+                )
+
+        assert result is True
+        mock_sleep.assert_awaited_once()
+        assert mock_sleep.await_args.args[0] == pytest.approx(50.0, abs=1.0)
+
+    async def test_cooldown_is_scoped_per_endpoint_path(
+        self, manager, other_manager, mock_sleep
+    ):
+        """The cached and force-update variants of the same resource are
+        different paths - a 429 on one must not delay the other."""
+        forced_url = BASE_URL + self.FORCED_ENDPOINT
+        cached_url = BASE_URL + self.CACHED_ENDPOINT
+
+        with aioresponses() as m:
+            m.get(forced_url, status=429, headers={"Retry-After": "50"})
+            m.get(forced_url, payload={"flow": 1.0}, status=200)
+            async with manager:
+                await manager.get_cubic_secure_configuration(
+                    "cubic-1", force_update=True
+                )
+
+        mock_sleep.reset_mock()
+
+        with aioresponses() as m:
+            m.get(cached_url, payload={"flow": 2.0}, status=200)
+            async with other_manager:
+                result = await other_manager.get_cubic_secure_configuration(
+                    "cubic-1", force_update=False
+                )
+
+        assert result is True
+        mock_sleep.assert_not_awaited()
+
+    async def test_success_clears_the_cooldown_for_that_endpoint(
+        self, manager, other_manager, mock_sleep
+    ):
+        url = BASE_URL + self.FORCED_ENDPOINT
+
+        with aioresponses() as m:
+            m.get(url, status=429, headers={"Retry-After": "1"})
+            m.get(url, payload={"flow": 1.0}, status=200)
+            async with manager:
+                await manager.get_cubic_secure_configuration(
+                    "cubic-1", force_update=True
+                )
+
+        mock_sleep.reset_mock()
+
+        with aioresponses() as m:
+            m.get(url, payload={"flow": 2.0}, status=200)
+            async with other_manager:
+                await other_manager.get_cubic_secure_configuration(
+                    "cubic-1", force_update=True
+                )
+
+        mock_sleep.assert_not_awaited()
+
+
+class TestPerCallMaxWait:
+    """`_get`/`_post` accept an optional per-call `max_wait` budget - how
+    long *this* caller is willing to wait, independent of the shared
+    cooldown. Giving up on that budget must never touch the shared
+    deadline: the remaining cooldown is still real server-side state that
+    applies to whoever asks next.
+    """
+
+    ENDPOINT = "service/cubic/secure/cubic-1/configuration/1"
+
+    async def test_gives_up_once_its_own_budget_is_exhausted(
+        self, manager, rate_limit_cooldowns
+    ):
+        pylksystems._record_rate_limited(self.ENDPOINT, 0.4)
+
+        with aioresponses():
+            async with manager:
+                success, data = await manager._get(self.ENDPOINT, max_wait=0.05)
+
+        assert success is False
+        assert data is None
+
+    async def test_giving_up_does_not_shorten_the_shared_cooldown(
+        self, manager, rate_limit_cooldowns
+    ):
+        pylksystems._record_rate_limited(self.ENDPOINT, 0.4)
+        deadline = rate_limit_cooldowns[self.ENDPOINT]
+
+        with aioresponses():
+            async with manager:
+                await manager._get(self.ENDPOINT, max_wait=0.05)
+
+        assert rate_limit_cooldowns[self.ENDPOINT] == deadline
+
+    async def test_without_max_wait_keeps_waiting_out_the_full_cooldown(
+        self, manager, rate_limit_cooldowns, mock_sleep
+    ):
+        pylksystems._record_rate_limited(self.ENDPOINT, 50)
+
+        with aioresponses() as m:
+            m.get(BASE_URL + self.ENDPOINT, payload={"flow": 1.0}, status=200)
+            async with manager:
+                success, data = await manager._get(self.ENDPOINT)
+
+        assert success is True
+        assert data == {"flow": 1.0}
+        mock_sleep.assert_awaited_once()
+        assert mock_sleep.await_args.args[0] == pytest.approx(50.0, abs=1.0)

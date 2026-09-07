@@ -35,7 +35,27 @@ def _load_pylksystems():
 pylksystems = _load_pylksystems()
 
 
+def _new_manager():
+    return pylksystems.LKSystemsManager("user@example.com", "hunter2")
+
+
 @pytest.fixture
 def manager():
     """A fresh, unauthenticated LKSystemsManager instance."""
-    return pylksystems.LKSystemsManager("user@example.com", "hunter2")
+    return _new_manager()
+
+
+@pytest.fixture
+def other_manager():
+    """A second, independent LKSystemsManager instance - for tests that
+    exercise state meant to be shared *across* instances."""
+    return _new_manager()
+
+
+@pytest.fixture(autouse=True)
+def rate_limit_cooldowns():
+    """The shared per-endpoint 429 cooldown store, reset before each test
+    so it doesn't leak between them."""
+    pylksystems._rate_limited_until.clear()
+    yield pylksystems._rate_limited_until
+    pylksystems._rate_limited_until.clear()
