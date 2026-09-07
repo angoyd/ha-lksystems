@@ -446,6 +446,37 @@ class TestCubicConfigurationStalenessForceFetch:
         )
         await coordinator.async_shutdown()  # cancel the expiry check this adopted
 
+    async def test_preserves_any_field_missing_from_the_live_response(
+        self, hass, fake_manager
+    ):
+        """Not just muteLeak - any key the cached response carries that the
+        live/bypass one omits should survive the merge."""
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        stale_cache_updated = (
+            int(time.time()) - int(coordinator.update_interval.total_seconds()) - 60
+        )
+        cached_config = build_cubic_configuration(mute_leak=1200)
+        cached_config["cacheUpdated"] = stale_cache_updated
+        cached_config["pairingCode"] = "abc123"
+        fake_manager.cubic_configurations_cached_by_device[CUBIC_IDENTITY] = (
+            cached_config
+        )
+
+        fake_manager.cubic_configurations_by_device[CUBIC_IDENTITY] = (
+            build_live_config_without_mute_leak()
+        )
+
+        with _patch_manager(fake_manager):
+            data = await coordinator._async_update_data()
+
+        assert (
+            data["cubic_devices"][CUBIC_IDENTITY]["configuration"]["pairingCode"]
+            == "abc123"
+        )
+        await coordinator.async_shutdown()  # cancel the expiry check this adopted
+
 
 class TestMultipleCubicSecureDevices:
     """Two Cubic Secure devices registered under the same property used to
@@ -907,6 +938,138 @@ class TestValveStateConfirmation:
             ]
             == "closed"
         )
+
+
+class TestAsyncRequestForcedRefresh:
+    """async_request_forced_refresh() is the general cache-bypass primitive:
+    unlike force_device_update() (Arc-sense measurement) and
+    force_cubic_secure_configuration_update() (Cubic Secure configuration),
+    it's the only entry point for bypassing the cache for a Cubic Secure
+    device's own measurement (which carries leak state) or an Arc-sense
+    device's configuration (used for thermostat-role devices) - neither had
+    any bypass at all before this.
+    """
+
+    async def test_bypasses_cubic_secure_measurement_cache_for_the_requested_device(
+        self, hass, fake_manager
+    ):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            data = await coordinator._async_update_data()
+        coordinator.async_set_updated_data(data)
+        fake_manager.calls.clear()
+
+        with _patch_manager(fake_manager):
+            await coordinator.async_request_forced_refresh(CUBIC_IDENTITY)
+
+        assert (
+            "get_cubic_secure_measurement",
+            CUBIC_IDENTITY,
+            True,
+        ) in fake_manager.calls
+        await coordinator.async_shutdown()  # cancel the debouncer's cooldown timer
+
+    async def test_bypasses_device_configuration_cache_for_the_requested_device(
+        self, hass, fake_manager
+    ):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            data = await coordinator._async_update_data()
+        coordinator.async_set_updated_data(data)
+        fake_manager.calls.clear()
+
+        with _patch_manager(fake_manager):
+            await coordinator.async_request_forced_refresh(THERMOSTAT_MAC)
+
+        assert (
+            "get_device_configuration",
+            THERMOSTAT_MAC,
+            True,
+        ) in fake_manager.calls
+        await coordinator.async_shutdown()  # cancel the debouncer's cooldown timer
+
+    async def test_does_not_bypass_for_a_device_that_was_not_requested(
+        self, hass, fake_manager
+    ):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            data = await coordinator._async_update_data()
+        coordinator.async_set_updated_data(data)
+        fake_manager.calls.clear()
+
+        with _patch_manager(fake_manager):
+            await coordinator.async_request_forced_refresh(CUBIC_IDENTITY)
+
+        assert (
+            "get_device_configuration",
+            THERMOSTAT_MAC,
+            True,
+        ) not in fake_manager.calls
+        await coordinator.async_shutdown()  # cancel the debouncer's cooldown timer
+
+    async def test_forced_bypass_is_only_honored_once(self, hass, fake_manager):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            data = await coordinator._async_update_data()
+        coordinator.async_set_updated_data(data)
+
+        with _patch_manager(fake_manager):
+            await coordinator.async_request_forced_refresh(CUBIC_IDENTITY)
+        fake_manager.calls.clear()
+
+        with _patch_manager(fake_manager):
+            await coordinator.async_request_refresh()
+
+        assert (
+            "get_cubic_secure_measurement",
+            CUBIC_IDENTITY,
+            True,
+        ) not in fake_manager.calls
+        await coordinator.async_shutdown()  # cancel the debouncer's cooldown timer
+
+    async def test_two_devices_queued_before_the_snapshot_are_both_honored(
+        self, hass, fake_manager
+    ):
+        """Regression test for using a set of device ids rather than a
+        single overwritable value: two callers queuing a bypass for two
+        different devices before _fetch_data() takes its snapshot must not
+        have one request clobber the other. Queues both directly rather
+        than through two overlapping async_request_forced_refresh() calls,
+        since FakeLKSystemsManager never actually suspends, so two such
+        calls would just run back-to-back rather than genuinely overlap."""
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            data = await coordinator._async_update_data()
+        coordinator.async_set_updated_data(data)
+        fake_manager.calls.clear()
+
+        coordinator._force_bypass_device_ids.add(CUBIC_IDENTITY)
+        coordinator._force_bypass_device_ids.add(THERMOSTAT_MAC)
+
+        with _patch_manager(fake_manager):
+            await coordinator.async_request_refresh()
+
+        assert (
+            "get_cubic_secure_measurement",
+            CUBIC_IDENTITY,
+            True,
+        ) in fake_manager.calls
+        assert (
+            "get_device_configuration",
+            THERMOSTAT_MAC,
+            True,
+        ) in fake_manager.calls
+        await coordinator.async_shutdown()  # cancel the debouncer's cooldown timer
 
 
 class TestRefreshCubicSecureConfiguration:
