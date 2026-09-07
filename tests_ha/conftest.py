@@ -87,7 +87,7 @@ class FakeLKSystemsManager:
         self.device_measurements: dict = {}
         self.device_configurations: dict = {}
         self.hub_devices: dict = {}
-        self.cubic_secure_messurement: dict | None = None
+        self.cubic_secure_measurement: dict | None = None
         self.cubic_secure_configuration: dict | None = None
 
         # Per-call canned data, keyed by device/hub identity. Tests set
@@ -174,7 +174,7 @@ class FakeLKSystemsManager:
             ("get_cubic_secure_measurement", device_identity, force_update)
         )
         if self.get_cubic_secure_measurement_result:
-            self.cubic_secure_messurement = self.cubic_measurements_by_device.get(
+            self.cubic_secure_measurement = self.cubic_measurements_by_device.get(
                 device_identity, self.cubic_measurement_data
             )
         return self.get_cubic_secure_measurement_result

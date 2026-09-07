@@ -255,7 +255,7 @@ class TestCubicSecureMeasurement:
                 )
 
         assert result is True
-        assert manager.cubic_secure_messurement == {"flow": 1.5}
+        assert manager.cubic_secure_measurement == {"flow": 1.5}
 
     async def test_without_force_update_selects_endpoint(self, manager):
         with aioresponses() as m:
@@ -268,7 +268,7 @@ class TestCubicSecureMeasurement:
                 result = await manager.get_cubic_secure_measurement("cubic-1")
 
         assert result is True
-        assert manager.cubic_secure_messurement == {"flow": 0.0}
+        assert manager.cubic_secure_measurement == {"flow": 0.0}
 
     async def test_error_status_returns_false_and_keeps_state(self, manager):
         with aioresponses() as m:
@@ -280,7 +280,7 @@ class TestCubicSecureMeasurement:
                 result = await manager.get_cubic_secure_measurement("cubic-1")
 
         assert result is False
-        assert manager.cubic_secure_messurement is None
+        assert manager.cubic_secure_measurement is None
 
 
 class TestSetDeviceTemperature:
@@ -396,7 +396,7 @@ class TestRateLimitBackoff:
                 result = await manager.get_cubic_secure_measurement("cubic-1")
 
         assert result is True
-        assert manager.cubic_secure_messurement == {"flow": 0.0}
+        assert manager.cubic_secure_measurement == {"flow": 0.0}
 
     async def test_429_honors_retry_after_header(self, manager, mock_sleep):
         url = BASE_URL + "service/cubic/secure/cubic-1/measurement/0"

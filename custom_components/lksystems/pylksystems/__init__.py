@@ -154,7 +154,7 @@ class LKSystemsManager:
         self.userid = None
         self.jwt_token = None
         self.refresh_token = None
-        self._cubic_secure_messurement = None
+        self._cubic_secure_measurement = None
         self._user_structure = None
         self._cubic_secure_configuration = None
         self._cubic_secure_pressure_test_reports = None
@@ -395,14 +395,14 @@ class LKSystemsManager:
             endpoint = f"service/cubic/secure/{cubic_identity}/measurement/0"
         success, res = await self._get(endpoint)
         if success:
-            self._cubic_secure_messurement = res
+            self._cubic_secure_measurement = res
             return True
         return False
 
     @property
-    def cubic_secure_messurement(self):
-        """Property for Cubic Secure messurement"""
-        return self._cubic_secure_messurement
+    def cubic_secure_measurement(self):
+        """Property for Cubic Secure measurement"""
+        return self._cubic_secure_measurement
 
     async def get_user_structure(self):
         """Fetch user secure measurement"""

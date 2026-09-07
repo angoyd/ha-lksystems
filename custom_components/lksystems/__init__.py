@@ -87,7 +87,7 @@ class LkCubicDeviceData(TypedDict):
     LkStructureResp.cubic_devices so multiple devices on one account
     don't share a single overwritable slot."""
 
-    machine_info: LkStructureMashine
+    machine_info: LkStructureMachine
     last_measurement: LkCubicSecureResp
     configuration: LKCubicSecureConfigResp
 
@@ -146,7 +146,7 @@ class LkCubicSecureResp(TypedDict):
     cacheUpdated: int
 
 
-class LkStructureMashine(TypedDict):
+class LkStructureMachine(TypedDict):
     """Machines API Resp structure"""
 
     identity: str
@@ -956,12 +956,12 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                                     device_identity
                                 )
 
-                                if lk_inst.cubic_secure_messurement is not None:
+                                if lk_inst.cubic_secure_measurement is not None:
                                     # Get time as unix timestamp
                                     timestamp = int(time.time())
                                     if (
                                         timestamp
-                                        - lk_inst.cubic_secure_messurement[
+                                        - lk_inst.cubic_secure_measurement[
                                             "cacheUpdated"
                                         ]
                                         > self.update_interval.total_seconds()
@@ -981,7 +981,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
 
                                 resp["cubic_devices"][device_identity][
                                     "last_measurement"
-                                ] = lk_inst.cubic_secure_messurement
+                                ] = lk_inst.cubic_secure_measurement
                                 if not await lk_inst.get_cubic_secure_configuration(
                                     device_identity
                                 ):

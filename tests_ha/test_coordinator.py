@@ -12,6 +12,7 @@ import base64
 import json
 import logging
 import time
+import typing
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -28,7 +29,9 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.lksystems import (
     TOKEN_STORAGE,
+    LkCubicDeviceData,
     LKSystemCoordinator,
+    LkStructureMachine,
     is_token_valid,
 )
 from custom_components.lksystems.const import (
@@ -75,6 +78,14 @@ def _clear_token_storage():
     TOKEN_STORAGE.clear()
     yield
     TOKEN_STORAGE.clear()
+
+
+class TestLkCubicDeviceDataTyping:
+    def test_machine_info_field_uses_correctly_spelled_machine_type(self):
+        assert (
+            typing.get_type_hints(LkCubicDeviceData)["machine_info"]
+            is LkStructureMachine
+        )
 
 
 class TestIsTokenValid:
