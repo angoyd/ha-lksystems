@@ -8,6 +8,14 @@
                 },
                 "description": "Please enter the username and password for your LK Systems account",
                 "title": "LK Systems"
+            },
+            "reauth": {
+                "title": "[%key:common::config_flow::title::reauth%]",
+                "description": "Your LK Systems password appears to have changed - enter the new one to continue.",
+                "data": {
+                    "username": "[%key:common::config_flow::data::username%]",
+                    "password": "[%key:common::config_flow::data::password%]"
+                }
             }
         },
         "error": {
@@ -16,7 +24,9 @@
             "unknown": "[%key:common::config_flow::error::unknown%]"
         },
         "abort": {
-            "already_configured": "This LK Systems account is already configured. One integration entry covers your whole account, including multiple Cubic Secure devices - you don't need to add it again to see additional devices."
+            "already_configured": "This LK Systems account is already configured. One integration entry covers your whole account, including multiple Cubic Secure devices - you don't need to add it again to see additional devices.",
+            "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
+            "reauth_failed": "Couldn't find the account entry to update - try removing and re-adding the integration instead."
         }
     },
     "issues": {

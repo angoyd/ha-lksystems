@@ -1217,14 +1217,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await coordinator.async_config_entry_first_refresh()
     except ConfigEntryAuthFailed:
-        # If we get an auth error, we'll try to reauth
-        hass.async_create_task(
-            hass.config_entries.flow.async_init(
-                DOMAIN,
-                context={"source": "reauth"},
-                data=entry.data,
-            )
-        )
+        # entry.async_start_reauth() (rather than hand-rolling
+        # hass.config_entries.flow.async_init()) is what actually links the
+        # started flow back to this entry - without that link, HA has
+        # nothing to show a "Reauthenticate" prompt against.
+        entry.async_start_reauth(hass)
         return False
 
     hass.data[DOMAIN][entry.entry_id] = coordinator

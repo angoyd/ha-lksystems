@@ -10,6 +10,9 @@ tests describe the flow's actual current behavior, not its API calls.
 
 from __future__ import annotations
 
+import json
+import re
+from pathlib import Path
 from unittest.mock import patch
 
 from homeassistant.config_entries import SOURCE_REAUTH
@@ -28,6 +31,9 @@ USER_INPUT = {
     CONF_PASSWORD: "hunter2",
     CONF_UPDATE_INTERVAL: DEFAULT_UPDATE_INTERVAL,
 }
+
+CONFIG_FLOW_PATH = "custom_components/lksystems/config_flow.py"
+STRINGS_PATH = "custom_components/lksystems/strings.json"
 
 
 async def test_user_step_shows_form(hass):
@@ -174,3 +180,19 @@ async def test_reauth_invalid_auth_reshows_form_with_error(hass, fake_manager):
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "reauth"
     assert result["errors"] == {"base": "invalid_auth"}
+
+
+def test_every_abort_reason_has_a_translation_string():
+    """An abort reason with no strings.json entry shows the bare Python
+    identifier to the user instead of a readable message - confirmed live,
+    a user saw a popup that just said "reauth_successful"."""
+    config_flow_source = (Path(__file__).parent.parent / CONFIG_FLOW_PATH).read_text()
+    reasons_used_in_code = set(
+        re.findall(r'async_abort\(reason="([^"]+)"\)', config_flow_source)
+    )
+    assert reasons_used_in_code, "expected to find at least one abort() call"
+
+    strings = json.loads((Path(__file__).parent.parent / STRINGS_PATH).read_text())
+    translated_reasons = set(strings["config"]["abort"])
+
+    assert reasons_used_in_code <= translated_reasons

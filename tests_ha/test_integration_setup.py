@@ -12,7 +12,10 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+from homeassistant.config_entries import SOURCE_REAUTH
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers import device_registry as dr
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.lksystems.const import DOMAIN
 
@@ -185,3 +188,33 @@ async def test_unload_entry_removes_coordinator(hass, fake_manager):
     await hass.async_block_till_done()
 
     assert entry.entry_id not in hass.data[DOMAIN]
+
+
+async def test_login_failure_during_setup_starts_a_reauth_flow_for_this_entry(
+    hass, fake_manager
+):
+    """A wrong/changed password must surface as a findable "Reauthenticate"
+    prompt, not just a background flow nothing points at - which needs the
+    started flow's context to carry this entry's own entry_id, the same
+    way HA's own ConfigEntry.async_start_reauth() does it."""
+    fake_manager.login_result = False
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_USERNAME: "user@example.com", CONF_PASSWORD: "hunter2"},
+    )
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.lksystems.LKSystemsManager", return_value=fake_manager
+    ):
+        assert not await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    flows = hass.config_entries.flow.async_progress_by_handler(
+        DOMAIN, include_uninitialized=True
+    )
+    assert any(
+        flow["context"].get("source") == SOURCE_REAUTH
+        and flow["context"].get("entry_id") == entry.entry_id
+        for flow in flows
+    )
