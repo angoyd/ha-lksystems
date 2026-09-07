@@ -1,4 +1,5 @@
 from .pylksystems import LKSystemsManager, LKThresholds, LKPressureThresholds
+from contextlib import asynccontextmanager
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -14,6 +15,30 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class _ServiceLoginFailed(Exception):
+    """Raised by _authenticated_session() when login fails."""
+
+
+@asynccontextmanager
+async def _authenticated_session(hass: HomeAssistant, entry: ConfigEntry):
+    """Open one logged-in LKSystemsManager session for a service-layer
+    write - the shared shape every write below needs (extract
+    credentials, open a session, log in), instead of each
+    re-implementing its own copy.
+
+    Raises _ServiceLoginFailed if login fails - the caller decides what
+    that means for its own return value/error message.
+    """
+    username = entry.data.get(CONF_USERNAME)
+    password = entry.data.get(CONF_PASSWORD)
+
+    async with LKSystemsManager(username, password) as lk_inst:
+        if not await lk_inst.login():
+            _LOGGER.error("Failed to login, abort update")
+            raise _ServiceLoginFailed("Failed to login")
+        yield lk_inst
 
 
 def _get_serial_number(hass: HomeAssistant, device_id: str) -> str | None:
@@ -52,14 +77,9 @@ async def pause_leak_detection_for_serial(
     """
     _LOGGER.info("Pausing leak detection for %s for %s seconds", serial_number, seconds)
     try:
-        username = entry.data.get(CONF_USERNAME)
-        password = entry.data.get(CONF_PASSWORD)
         coordinator = hass.data[DOMAIN][entry.entry_id]
 
-        async with LKSystemsManager(username, password) as lk_inst:
-            if not await lk_inst.login():
-                _LOGGER.error("Failed to login, abort update")
-                raise Exception("Failed to login")
+        async with _authenticated_session(hass, entry) as lk_inst:
             await lk_inst.cubic_secure_pause_leak_detection(serial_number, seconds)
 
             coordinator.set_leak_detection_paused_until(serial_number, seconds)
@@ -85,14 +105,9 @@ async def _set_valve_state_for_serial(
     action = "Closing" if close else "Opening"
     _LOGGER.info("%s valve %s", action, serial_number)
     try:
-        username = entry.data.get(CONF_USERNAME)
-        password = entry.data.get(CONF_PASSWORD)
         coordinator = hass.data[DOMAIN][entry.entry_id]
 
-        async with LKSystemsManager(username, password) as lk_inst:
-            if not await lk_inst.login():
-                _LOGGER.error("Failed to login, abort update")
-                return False
+        async with _authenticated_session(hass, entry) as lk_inst:
             if close:
                 await lk_inst.cubic_secure_close_valve(serial_number)
             else:
@@ -101,6 +116,8 @@ async def _set_valve_state_for_serial(
                 lk_inst, serial_number
             )
         return True
+    except _ServiceLoginFailed:
+        return False
     except Exception as e:
         _LOGGER.error("Error %s valve: %s", action.lower(), e)
         return False
@@ -169,13 +186,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
             return
         _LOGGER.info(f"Setting pressure test schedule {sn} to {hour}:{minute}")
         try:
-            username = entry.data.get(CONF_USERNAME)
-            password = entry.data.get(CONF_PASSWORD)
-
-            async with LKSystemsManager(username, password) as lk_inst:
-                if not await lk_inst.login():
-                    _LOGGER.error("Failed to login, abort update")
-                    raise Exception("Failed to login")
+            async with _authenticated_session(hass, entry) as lk_inst:
                 await lk_inst.cubic_secure_set_pressure_test_schedule(sn, hour, minute)
         except Exception as e:
             _LOGGER.error("Error setting pressure test schedule: %s", e)
@@ -223,13 +234,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         )
         _LOGGER.info(f"Setting thresholds {sn} to {thresholds}")
         try:
-            username = entry.data.get(CONF_USERNAME)
-            password = entry.data.get(CONF_PASSWORD)
-
-            async with LKSystemsManager(username, password) as lk_inst:
-                if not await lk_inst.login():
-                    _LOGGER.error("Failed to login, abort update")
-                    raise Exception("Failed to login")
+            async with _authenticated_session(hass, entry) as lk_inst:
                 await lk_inst.cubic_secure_set_thresholds(sn, thresholds)
         except Exception as e:
             _LOGGER.error("Error setting thresholds: %s", e)

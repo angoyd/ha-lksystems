@@ -266,6 +266,26 @@ async def test_set_pressure_test_schedule_calls_client(hass, fake_manager):
     ) in fake_manager.calls
 
 
+async def test_set_pressure_test_schedule_login_failure_does_not_raise(
+    hass, fake_manager
+):
+    """Handler catches the login failure inside its try/except and just logs."""
+    _, device_entry = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+    fake_manager.login_result = False
+
+    with patch_services_manager(fake_manager):
+        await hass.services.async_call(
+            DOMAIN,
+            "set_pressure_test_schedule",
+            {"device_id": device_entry.id, "hour": 3, "minute": 30},
+            blocking=True,
+        )
+
+    assert not any(
+        c[0] == "cubic_secure_set_pressure_test_schedule" for c in fake_manager.calls
+    )
+
+
 async def test_set_thresholds_calls_client_with_defaults(hass, fake_manager):
     _, device_entry = await _setup_entry_and_get_cubic_device(hass, fake_manager)
 
@@ -285,6 +305,22 @@ async def test_set_thresholds_calls_client_with_defaults(hass, fake_manager):
     thresholds = threshold_calls[0][2]
     assert thresholds["pressure"]["sensitivity"] == 0.3
     assert thresholds["leakLarge"]["threshold"] == 1500.0
+
+
+async def test_set_thresholds_login_failure_does_not_raise(hass, fake_manager):
+    """Handler catches the login failure inside its try/except and just logs."""
+    _, device_entry = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+    fake_manager.login_result = False
+
+    with patch_services_manager(fake_manager):
+        await hass.services.async_call(
+            DOMAIN,
+            "set_thresholds",
+            {"device_id": device_entry.id},
+            blocking=True,
+        )
+
+    assert not any(c[0] == "cubic_secure_set_thresholds" for c in fake_manager.calls)
 
 
 async def test_close_valve_login_failure_does_not_raise(hass, fake_manager):
