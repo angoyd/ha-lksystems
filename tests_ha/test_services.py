@@ -18,7 +18,11 @@ from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.lksystems.const import DOMAIN
-from custom_components.lksystems.services import pause_leak_detection_for_serial
+from custom_components.lksystems.services import (
+    close_valve_for_serial,
+    open_valve_for_serial,
+    pause_leak_detection_for_serial,
+)
 
 from .conftest import (
     CUBIC_IDENTITY,
@@ -186,6 +190,61 @@ class TestPauseLeakDetectionForSerial:
             await pause_leak_detection_for_serial(hass, entry, CUBIC_IDENTITY, 1800)
 
         assert fake_manager.calls.count(("login",)) == 1
+
+
+class TestValveActionForSerial:
+    """Direct tests for close_valve_for_serial/open_valve_for_serial (see
+    their own docstring for why they're called directly rather than only
+    through the close_valve/open_valve services)."""
+
+    async def test_close_calls_the_client(self, hass, fake_manager):
+        entry, _ = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+
+        with patch_all_managers(fake_manager):
+            result = await close_valve_for_serial(hass, entry, CUBIC_IDENTITY)
+
+        assert result is True
+        assert ("cubic_secure_close_valve", CUBIC_IDENTITY) in fake_manager.calls
+
+    async def test_open_calls_the_client(self, hass, fake_manager):
+        entry, _ = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+
+        with patch_all_managers(fake_manager):
+            result = await open_valve_for_serial(hass, entry, CUBIC_IDENTITY)
+
+        assert result is True
+        assert ("cubic_secure_open_valve", CUBIC_IDENTITY) in fake_manager.calls
+
+    async def test_login_failure_returns_false_and_does_not_call_the_client(
+        self, hass, fake_manager
+    ):
+        entry, _ = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+        fake_manager.login_result = False
+
+        with patch_all_managers(fake_manager):
+            result = await close_valve_for_serial(hass, entry, CUBIC_IDENTITY)
+
+        assert result is False
+        assert not any(c[0] == "cubic_secure_close_valve" for c in fake_manager.calls)
+
+    async def test_reuses_one_session_for_the_write_and_its_confirmation_read(
+        self, hass, fake_manager
+    ):
+        """The write (cubic_secure_close_valve) and its immediate
+        confirmation read (get_cubic_secure_configuration) used to each
+        open their own session - two logins for one logical action."""
+        entry, _ = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+        fake_manager.calls.clear()
+
+        with patch_all_managers(fake_manager):
+            await close_valve_for_serial(hass, entry, CUBIC_IDENTITY)
+
+        assert fake_manager.calls.count(("login",)) == 1
+        assert (
+            "get_cubic_secure_configuration",
+            CUBIC_IDENTITY,
+            True,
+        ) in fake_manager.calls
 
 
 async def test_set_pressure_test_schedule_calls_client(hass, fake_manager):

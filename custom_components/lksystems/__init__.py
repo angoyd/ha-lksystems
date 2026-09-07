@@ -22,7 +22,6 @@ from homeassistant.exceptions import HomeAssistantError, ConfigEntryAuthFailed
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.typing import ConfigType
@@ -683,14 +682,56 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         self.valve_action_pending.pop(device_identity, None)
         self.async_update_listeners()
 
+    def _valve_reached_expected_state(
+        self, device_identity: str, expect_closed: bool
+    ) -> bool:
+        """Whether the coordinator's current data already shows the valve
+        in the state an open/close write was asked to reach."""
+        valve_state = self.data["cubic_devices"][device_identity]["configuration"].get(
+            "valveState"
+        )
+        return (valve_state == CUBIC_SECURE_VALVE_STATE_CLOSED) == expect_closed
+
+    def _resolve_valve_action(self, device_identity: str) -> None:
+        """Mark a device's pending open/close write as confirmed.
+
+        A confirming fetch already notified listeners once with its raw
+        data; entities reading valve_action_pending (is_closing/
+        is_opening) need a second notification to pick up that it just
+        cleared, or they're stuck showing the transitional state until
+        the next regular poll.
+        """
+        self.valve_action_pending.pop(device_identity, None)
+        self.async_update_listeners()
+
+    def handle_valve_write_result(
+        self, device_identity: str, expect_closed: bool, write_succeeded: bool
+    ) -> None:
+        """Decide what a just-finished open/close write means for the
+        pending confirmation mark_valve_action_pending() set before it.
+
+        The write is expected to have already reused its own session for
+        one confirmation read, so coordinator data may already reflect
+        the new state - resolve immediately rather than waiting out a
+        retry interval for news that already arrived. If it doesn't yet
+        (the physical motor is still moving), fall back to the regular
+        confirmation retry loop. If the write was never actually issued
+        (e.g. login failed), there's nothing to confirm.
+        """
+        if not write_succeeded:
+            self.clear_valve_action_pending(device_identity)
+        elif self._valve_reached_expected_state(device_identity, expect_closed):
+            self._resolve_valve_action(device_identity)
+        else:
+            self._schedule_valve_state_confirmation(device_identity, expect_closed)
+
     def _schedule_valve_state_confirmation(
         self, device_identity: str, expect_closed: bool
     ) -> None:
-        """After an open/close write, poll the cloud every
-        VALVE_ACTION_RETRY_INTERVAL_SECONDS until it confirms the valve
-        actually reached the requested state, giving up after
-        VALVE_ACTION_MAX_RETRY_SECONDS - see that constant's own comment
-        for what happens then.
+        """Poll the cloud every VALVE_ACTION_RETRY_INTERVAL_SECONDS until
+        it confirms the valve actually reached the requested state, giving
+        up after VALVE_ACTION_MAX_RETRY_SECONDS - see that constant's own
+        comment for what happens then.
         """
         self.mark_valve_action_pending(device_identity, expect_closed)
         retry_deadline = dt_util.utcnow() + timedelta(
@@ -701,16 +742,6 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             self._valve_action_unsub[device_identity] = async_track_point_in_time(
                 self.hass, _check_valve_state, when
             )
-
-        def _resolve() -> None:
-            self.valve_action_pending.pop(device_identity, None)
-            # force_cubic_secure_configuration_update() below already
-            # notified listeners once with this check's raw fetch -
-            # entities reading valve_action_pending (is_closing/
-            # is_opening) need a second notification to pick up that it
-            # just cleared, or they're stuck showing the transitional
-            # state until the next regular poll.
-            self.async_update_listeners()
 
         def _give_up() -> None:
             # HA already issued the write - assume it succeeded rather
@@ -725,7 +756,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                 if expect_closed
                 else CUBIC_SECURE_VALVE_STATE_OPEN
             )
-            _resolve()
+            self._resolve_valve_action(device_identity)
             _LOGGER.debug(
                 "Giving up on confirming valve %s reached the requested "
                 "state after %ss - assuming it did, the regular poll "
@@ -764,13 +795,8 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                 return
 
             now = dt_util.utcnow()
-            valve_state = self.data["cubic_devices"][device_identity][
-                "configuration"
-            ].get("valveState")
-            actually_closed = valve_state == CUBIC_SECURE_VALVE_STATE_CLOSED
-
-            if actually_closed == expect_closed:
-                _resolve()
+            if self._valve_reached_expected_state(device_identity, expect_closed):
+                self._resolve_valve_action(device_identity)
                 _LOGGER.debug(
                     "Valve %s confirmed %s",
                     device_identity,
@@ -907,6 +933,21 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         )
         return await self._apply_cubic_secure_configuration(
             lk_inst, device_identity, force_update=False
+        )
+
+    async def force_cubic_secure_configuration_update_with_client(
+        self, lk_inst: LKSystemsManager, device_identity: str
+    ) -> bool:
+        """Like force_cubic_secure_configuration_update(), but reusing an
+        already-authenticated `lk_inst` instead of opening a new session -
+        see refresh_cubic_secure_configuration_with_client()'s own
+        docstring for why.
+        """
+        _LOGGER.debug(
+            "Forcing configuration update for Cubic Secure device %s", device_identity
+        )
+        return await self._apply_cubic_secure_configuration(
+            lk_inst, device_identity, force_update=True
         )
 
     async def _async_update_data(self) -> LkStructureResp:
@@ -1391,35 +1432,6 @@ def cubic_secure_configuration(
     """
     cubic_device = coordinator.data["cubic_devices"][device_identity]
     return cubic_device.get("configuration") or {}
-
-
-async def async_call_cubic_secure_service(
-    hass: HomeAssistant,
-    device_identity: str,
-    service: str,
-    extra_data: dict[str, Any] | None = None,
-) -> bool:
-    """Resolve a Cubic Secure device identity to its registered device and
-    call one of this integration's own services on it.
-
-    Shared by every platform whose action is "call an existing lksystems
-    service for this device" (button.py, valve.py, ...), so the device
-    lookup and its "not registered" error handling exist in one place.
-    Returns whether the service was actually called.
-    """
-    device_entry = dr.async_get(hass).async_get_device(
-        identifiers={(DOMAIN, device_identity)}
-    )
-    if device_entry is None:
-        _LOGGER.error(
-            "No registered device found for %s, cannot call %s", device_identity, service
-        )
-        return False
-
-    await hass.services.async_call(
-        DOMAIN, service, {"device_id": device_entry.id, **(extra_data or {})}, blocking=True
-    )
-    return True
 
 
 def cubic_secure_device_info(

@@ -70,6 +70,65 @@ async def pause_leak_detection_for_serial(
         _LOGGER.error("Error pausing leak detection: %s", e)
 
 
+async def _set_valve_state_for_serial(
+    hass: HomeAssistant, entry: ConfigEntry, serial_number: str, *, close: bool
+) -> bool:
+    """Log in, write the valve's requested state, and confirm it by
+    reusing the same session for one immediate read - shared body for
+    close_valve_for_serial/open_valve_for_serial below.
+
+    Returns whether the write itself was issued (a real login and API
+    call happened), not whether the valve has already reached the
+    requested state - that's for the caller to check against the
+    coordinator data this also just refreshed.
+    """
+    action = "Closing" if close else "Opening"
+    _LOGGER.info("%s valve %s", action, serial_number)
+    try:
+        username = entry.data.get(CONF_USERNAME)
+        password = entry.data.get(CONF_PASSWORD)
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+
+        async with LKSystemsManager(username, password) as lk_inst:
+            if not await lk_inst.login():
+                _LOGGER.error("Failed to login, abort update")
+                return False
+            if close:
+                await lk_inst.cubic_secure_close_valve(serial_number)
+            else:
+                await lk_inst.cubic_secure_open_valve(serial_number)
+            await coordinator.force_cubic_secure_configuration_update_with_client(
+                lk_inst, serial_number
+            )
+        return True
+    except Exception as e:
+        _LOGGER.error("Error %s valve: %s", action.lower(), e)
+        return False
+
+
+async def close_valve_for_serial(
+    hass: HomeAssistant, entry: ConfigEntry, serial_number: str
+) -> bool:
+    """Close one device's valve.
+
+    Shared by the close_valve service handler below and valve.py's valve
+    entity, which already has the serial number and would otherwise have
+    to round-trip it through the device registry into a device_id just to
+    go through the service call layer. Confirms the write by reusing the
+    same session for the follow-up read
+    (coordinator.force_cubic_secure_configuration_update_with_client())
+    rather than opening a second one just for that.
+    """
+    return await _set_valve_state_for_serial(hass, entry, serial_number, close=True)
+
+
+async def open_valve_for_serial(
+    hass: HomeAssistant, entry: ConfigEntry, serial_number: str
+) -> bool:
+    """Open one device's valve - see close_valve_for_serial's own docstring."""
+    return await _set_valve_state_for_serial(hass, entry, serial_number, close=False)
+
+
 async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
     @callback
     async def pause_leak_detection(call: ServiceCall) -> None:
@@ -88,18 +147,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         sn = _get_serial_number(hass, device_id)
         if not sn:
             return
-        _LOGGER.info(f"Closing valve {sn}")
-        try:
-            username = entry.data.get(CONF_USERNAME)
-            password = entry.data.get(CONF_PASSWORD)
-
-            async with LKSystemsManager(username, password) as lk_inst:
-                if not await lk_inst.login():
-                    _LOGGER.error("Failed to login, abort update")
-                    raise Exception("Failed to login")
-                await lk_inst.cubic_secure_close_valve(sn)
-        except Exception as e:
-            _LOGGER.error("Error closing valve: %s", e)
+        await close_valve_for_serial(hass, entry, sn)
 
     @callback
     async def open_valve(call: ServiceCall) -> None:
@@ -108,18 +156,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         sn = _get_serial_number(hass, device_id)
         if not sn:
             return
-        _LOGGER.info(f"Open valve {sn}")
-        try:
-            username = entry.data.get(CONF_USERNAME)
-            password = entry.data.get(CONF_PASSWORD)
-
-            async with LKSystemsManager(username, password) as lk_inst:
-                if not await lk_inst.login():
-                    _LOGGER.error("Failed to login, abort update")
-                    raise Exception("Failed to login")
-                await lk_inst.cubic_secure_open_valve(sn)
-        except Exception as e:
-            _LOGGER.error("Error open valve: %s", e)
+        await open_valve_for_serial(hass, entry, sn)
 
     @callback
     async def set_pressure_test_schedule(call: ServiceCall) -> None:
