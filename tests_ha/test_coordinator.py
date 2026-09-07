@@ -8,6 +8,7 @@ whatever the client returns, token caching, and error handling.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -42,6 +43,8 @@ from custom_components.lksystems.const import (
     LEAK_DETECTION_EXPIRY_RETRY_INTERVAL_SECONDS,
     LEAK_DETECTION_LOCAL_WRITE_GRACE_SECONDS,
     PAUSE_LEAK_DETECTION_MIN_SECONDS,
+    VALVE_ACTION_MAX_RETRY_SECONDS,
+    VALVE_ACTION_RETRY_INTERVAL_SECONDS,
 )
 from custom_components.lksystems.repairs import _issue_id
 
@@ -55,6 +58,7 @@ from .conftest import (
     build_cubic_configuration,
     build_live_config_without_mute_leak,
     get_issue,
+    tiny_valve_retry_timings,
 )
 
 
@@ -643,6 +647,266 @@ class TestForceCubicSecureConfigurationUpdate:
             )
 
         assert result is False
+
+
+async def _valve_action_coordinator(hass, fake_manager):
+    """Build a coordinator with an already-completed initial refresh, for
+    the valve-state-confirmation retry tests below."""
+    entry = _make_entry(hass)
+    coordinator = LKSystemCoordinator(hass, entry)
+    with _patch_manager(fake_manager):
+        data = await coordinator._async_update_data()
+    coordinator.async_set_updated_data(data)
+    return coordinator
+
+
+class TestMarkAndClearValveActionPending:
+    """valve.py calls these directly around the write itself (not just
+    the confirmation retry-loop), so the entity shows "opening"/"closing"
+    the instant the user acts - the write goes through the same
+    unbounded Retry-After-honoring network layer as any other request
+    and can itself take a long time, confirmed missing live: a slow
+    write left the entity showing nothing until the frontend's own
+    optimistic toggle reverted."""
+
+    async def test_mark_sets_pending_and_notifies(self, hass, fake_manager):
+        coordinator = await _valve_action_coordinator(hass, fake_manager)
+        notified = []
+        coordinator.async_add_listener(lambda: notified.append(True))
+
+        coordinator.mark_valve_action_pending(CUBIC_IDENTITY, True)
+
+        assert coordinator.valve_action_pending[CUBIC_IDENTITY] is True
+        assert notified
+        await coordinator.async_shutdown()  # cancel the now-listened-for refresh interval
+
+    async def test_clear_pops_pending_and_notifies(self, hass, fake_manager):
+        """Used when the write itself never got attempted (e.g. the
+        device wasn't found) - nothing to confirm, so don't leave the
+        entity stuck showing a transitional state with no retry loop
+        ever going to resolve it."""
+        coordinator = await _valve_action_coordinator(hass, fake_manager)
+        coordinator.mark_valve_action_pending(CUBIC_IDENTITY, True)
+        notified = []
+        coordinator.async_add_listener(lambda: notified.append(True))
+
+        coordinator.clear_valve_action_pending(CUBIC_IDENTITY)
+
+        assert CUBIC_IDENTITY not in coordinator.valve_action_pending
+        assert notified
+        await coordinator.async_shutdown()  # cancel the now-listened-for refresh interval
+
+    async def test_clear_cancels_a_pending_confirmation_retry(self, hass, fake_manager):
+        coordinator = await _valve_action_coordinator(hass, fake_manager)
+        coordinator._schedule_valve_state_confirmation(CUBIC_IDENTITY, True)
+
+        coordinator.clear_valve_action_pending(CUBIC_IDENTITY)
+
+        assert CUBIC_IDENTITY not in coordinator._valve_action_unsub
+
+
+class TestValveStateConfirmation:
+    """Confirms an open/close write actually took effect, retrying past
+    the real-world lag between sending the command and the physical
+    valve motor finishing its 10-30s travel (confirmed against a real
+    device) - a single immediate check right after the write reads a
+    stale pre-action snapshot and would otherwise flip the entity right
+    back to the old state until the next regular poll, possibly minutes
+    later."""
+
+    async def test_resolves_on_the_first_check_if_already_matching(
+        self, hass, fake_manager
+    ):
+        coordinator = await _valve_action_coordinator(hass, fake_manager)
+        fake_manager.cubic_configurations_by_device[CUBIC_IDENTITY] = (
+            build_cubic_configuration(valve_state="closed")
+        )
+
+        coordinator._schedule_valve_state_confirmation(CUBIC_IDENTITY, True)
+        with _patch_manager(fake_manager):
+            async_fire_time_changed(
+                hass,
+                dt_util.utcnow()
+                + timedelta(seconds=VALVE_ACTION_RETRY_INTERVAL_SECONDS),
+            )
+            await hass.async_block_till_done()
+
+        assert (
+            coordinator.data["cubic_devices"][CUBIC_IDENTITY]["configuration"][
+                "valveState"
+            ]
+            == "closed"
+        )
+
+    async def test_retries_until_the_motor_finishes_moving(self, hass, fake_manager):
+        coordinator = await _valve_action_coordinator(hass, fake_manager)
+        # Still mid-travel - the write hasn't taken effect yet.
+        fake_manager.cubic_configurations_by_device[CUBIC_IDENTITY] = (
+            build_cubic_configuration(valve_state="open")
+        )
+
+        coordinator._schedule_valve_state_confirmation(CUBIC_IDENTITY, True)
+        with _patch_manager(fake_manager):
+            async_fire_time_changed(
+                hass,
+                dt_util.utcnow()
+                + timedelta(seconds=VALVE_ACTION_RETRY_INTERVAL_SECONDS),
+            )
+            await hass.async_block_till_done()
+
+        assert (
+            coordinator.data["cubic_devices"][CUBIC_IDENTITY]["configuration"][
+                "valveState"
+            ]
+            == "open"
+        ), "the motor is still moving - shouldn't be confirmed yet"
+
+        # The motor has now finished moving.
+        fake_manager.cubic_configurations_by_device[CUBIC_IDENTITY] = (
+            build_cubic_configuration(valve_state="closed")
+        )
+        with _patch_manager(fake_manager):
+            async_fire_time_changed(
+                hass,
+                dt_util.utcnow()
+                + timedelta(seconds=2 * VALVE_ACTION_RETRY_INTERVAL_SECONDS),
+            )
+            await hass.async_block_till_done()
+
+        assert (
+            coordinator.data["cubic_devices"][CUBIC_IDENTITY]["configuration"][
+                "valveState"
+            ]
+            == "closed"
+        )
+
+    async def test_gives_up_after_the_max_retry_window(self, hass, fake_manager):
+        """A safety cap for if the valve never reports the expected state
+        (e.g. it's jammed, or offline) - assumes the write succeeded
+        (HA already issued it) rather than retrying forever or leaving
+        the entity showing the stale pre-action reading."""
+        coordinator = await _valve_action_coordinator(hass, fake_manager)
+        fake_manager.cubic_configurations_by_device[CUBIC_IDENTITY] = (
+            build_cubic_configuration(valve_state="open")
+        )
+
+        max_retry, retry_interval = tiny_valve_retry_timings()
+        with max_retry, retry_interval, _patch_manager(fake_manager):
+            coordinator._schedule_valve_state_confirmation(CUBIC_IDENTITY, True)
+            await asyncio.sleep(0.3)  # comfortably past the (patched) tiny window
+
+        # Never confirmed by the cloud - shows the requested state anyway
+        # - but no retry left pending (the test's own teardown would fail
+        # on a lingering timer if one were).
+        assert (
+            coordinator.data["cubic_devices"][CUBIC_IDENTITY]["configuration"][
+                "valveState"
+            ]
+            == "closed"
+        )
+
+    async def test_marks_the_device_pending_as_soon_as_scheduled(
+        self, hass, fake_manager
+    ):
+        """valve.py's is_closing/is_opening read this immediately, before
+        the first retry check even runs - otherwise the entity would show
+        the (possibly stale) prior state for the first
+        VALVE_ACTION_RETRY_INTERVAL_SECONDS, not "closing"/"opening"."""
+        coordinator = await _valve_action_coordinator(hass, fake_manager)
+
+        coordinator._schedule_valve_state_confirmation(CUBIC_IDENTITY, True)
+
+        assert coordinator.valve_action_pending[CUBIC_IDENTITY] is True
+        await coordinator.async_shutdown()  # cancel the still-pending check
+
+    async def test_stays_pending_through_a_non_matching_intermediate_check(
+        self, hass, fake_manager
+    ):
+        """A retry that reads a not-yet-updated value still publishes it
+        (force_cubic_secure_configuration_update() always does) - pending
+        must stay set through that, or the entity would flash to the
+        stale value instead of continuing to show "closing"/"opening"."""
+        coordinator = await _valve_action_coordinator(hass, fake_manager)
+        fake_manager.cubic_configurations_by_device[CUBIC_IDENTITY] = (
+            build_cubic_configuration(valve_state="open")
+        )
+
+        coordinator._schedule_valve_state_confirmation(CUBIC_IDENTITY, True)
+        with _patch_manager(fake_manager):
+            async_fire_time_changed(
+                hass,
+                dt_util.utcnow()
+                + timedelta(seconds=VALVE_ACTION_RETRY_INTERVAL_SECONDS),
+            )
+            await hass.async_block_till_done()
+
+        assert coordinator.valve_action_pending[CUBIC_IDENTITY] is True
+        await coordinator.async_shutdown()  # cancel the still-pending check
+
+    async def test_clears_pending_once_confirmed(self, hass, fake_manager):
+        coordinator = await _valve_action_coordinator(hass, fake_manager)
+        fake_manager.cubic_configurations_by_device[CUBIC_IDENTITY] = (
+            build_cubic_configuration(valve_state="closed")
+        )
+
+        coordinator._schedule_valve_state_confirmation(CUBIC_IDENTITY, True)
+        with _patch_manager(fake_manager):
+            async_fire_time_changed(
+                hass,
+                dt_util.utcnow()
+                + timedelta(seconds=VALVE_ACTION_RETRY_INTERVAL_SECONDS),
+            )
+            await hass.async_block_till_done()
+
+        assert CUBIC_IDENTITY not in coordinator.valve_action_pending
+
+    async def test_clears_pending_after_giving_up(self, hass, fake_manager):
+        coordinator = await _valve_action_coordinator(hass, fake_manager)
+        fake_manager.cubic_configurations_by_device[CUBIC_IDENTITY] = (
+            build_cubic_configuration(valve_state="open")
+        )
+
+        max_retry, retry_interval = tiny_valve_retry_timings()
+        with max_retry, retry_interval, _patch_manager(fake_manager):
+            coordinator._schedule_valve_state_confirmation(CUBIC_IDENTITY, True)
+            await asyncio.sleep(0.3)  # comfortably past the (patched) tiny window
+
+        assert CUBIC_IDENTITY not in coordinator.valve_action_pending
+
+    async def test_abandons_a_fetch_that_would_outlast_the_retry_window(
+        self, hass, fake_manager
+    ):
+        """Regression test for a real bug found live: LK's API can
+        rate-limit this specific endpoint with a Retry-After long enough
+        that pylksystems' own (correct) wait for it can alone exceed the
+        whole retry window (a 93s Retry-After was observed on one real
+        attempt). Waiting for such a fetch to finish before checking the
+        deadline would leave the entity showing a transitional state for
+        as long as LK's server says to wait, however much longer than
+        VALVE_ACTION_MAX_RETRY_SECONDS that is - the fetch itself has to
+        be abandoned once its own budget runs out, not just ignored
+        afterwards."""
+        coordinator = await _valve_action_coordinator(hass, fake_manager)
+        fake_manager.cubic_configurations_by_device[CUBIC_IDENTITY] = (
+            build_cubic_configuration(valve_state="open")
+        )
+        # Far longer than the patched max retry window below and than
+        # this test's own real wait - if the fetch weren't abandoned, the
+        # assertions below would still find it pending/unresolved.
+        fake_manager.get_cubic_secure_configuration_delay = 5
+
+        max_retry, retry_interval = tiny_valve_retry_timings()
+        with max_retry, retry_interval, _patch_manager(fake_manager):
+            coordinator._schedule_valve_state_confirmation(CUBIC_IDENTITY, True)
+            await asyncio.sleep(0.3)
+
+        assert CUBIC_IDENTITY not in coordinator.valve_action_pending
+        assert (
+            coordinator.data["cubic_devices"][CUBIC_IDENTITY]["configuration"][
+                "valveState"
+            ]
+            == "closed"
+        )
 
 
 class TestRefreshCubicSecureConfiguration:

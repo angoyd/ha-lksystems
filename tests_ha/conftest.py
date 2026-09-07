@@ -118,6 +118,10 @@ class FakeLKSystemsManager:
         self.get_hub_devices_result = True
         self.get_cubic_secure_measurement_result = True
         self.get_cubic_secure_configuration_result = True
+        # Simulates a real fetch taking a while - e.g. pylksystems
+        # honoring a long Retry-After from LK's own rate limiter, which
+        # can take tens of seconds on a real device (confirmed live).
+        self.get_cubic_secure_configuration_delay: float = 0
         self.set_thermostat_temperature_result: dict = {
             "success": True,
             "data": {},
@@ -126,6 +130,11 @@ class FakeLKSystemsManager:
 
         # Call log, for tests that want to assert *what* was called.
         self.calls: list[tuple] = []
+
+        # Simulates a real open/close write taking a while - the write
+        # goes through the same unbounded Retry-After-honoring network
+        # layer as any other request, so it can itself take a long time.
+        self.valve_write_delay: float = 0
 
     async def __aenter__(self):
         return self
@@ -182,6 +191,8 @@ class FakeLKSystemsManager:
     async def get_cubic_secure_configuration(
         self, device_identity, force_update=False
     ):
+        if self.get_cubic_secure_configuration_delay:
+            await asyncio.sleep(self.get_cubic_secure_configuration_delay)
         self.calls.append(
             ("get_cubic_secure_configuration", device_identity, force_update)
         )
@@ -206,9 +217,13 @@ class FakeLKSystemsManager:
         return self.set_thermostat_temperature_result
 
     async def cubic_secure_close_valve(self, cubic_identity):
+        if self.valve_write_delay:
+            await asyncio.sleep(self.valve_write_delay)
         self.calls.append(("cubic_secure_close_valve", cubic_identity))
 
     async def cubic_secure_open_valve(self, cubic_identity):
+        if self.valve_write_delay:
+            await asyncio.sleep(self.valve_write_delay)
         self.calls.append(("cubic_secure_open_valve", cubic_identity))
 
     async def cubic_secure_pause_leak_detection(self, cubic_identity, seconds):
@@ -490,6 +505,22 @@ def patch_all_managers(manager: FakeLKSystemsManager):
     """
     with patch_coordinator_manager(manager), patch_services_manager(manager):
         yield
+
+
+def tiny_valve_retry_timings():
+    """The valve confirmation's give-up decision compares real
+    dt_util.utcnow() reads (a single fetch's own real duration - e.g.
+    honoring a long Retry-After - has to count, see
+    LKSystemCoordinator._schedule_valve_state_confirmation's own comment
+    on why), which HA's simulated-time test helpers
+    (async_fire_time_changed) can't drive. Patches the retry timing
+    constants down to a few milliseconds so give-up tests can use real
+    waiting instead, without actually taking VALVE_ACTION_MAX_RETRY_SECONDS
+    to run."""
+    return (
+        patch("custom_components.lksystems.VALVE_ACTION_MAX_RETRY_SECONDS", 0.05),
+        patch("custom_components.lksystems.VALVE_ACTION_RETRY_INTERVAL_SECONDS", 0.01),
+    )
 
 
 @pytest.fixture

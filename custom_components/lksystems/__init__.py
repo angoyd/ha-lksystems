@@ -22,6 +22,7 @@ from homeassistant.exceptions import HomeAssistantError, ConfigEntryAuthFailed
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.typing import ConfigType
@@ -36,12 +37,16 @@ from homeassistant.helpers import config_validation as cv
 from .const import (
     CONF_UPDATE_INTERVAL,
     CUBIC_SECURE_MODEL,
+    CUBIC_SECURE_VALVE_STATE_CLOSED,
+    CUBIC_SECURE_VALVE_STATE_OPEN,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     LEAK_DETECTION_EXPIRY_MAX_RETRY_SECONDS,
     LEAK_DETECTION_EXPIRY_RETRY_INTERVAL_SECONDS,
     LEAK_DETECTION_LOCAL_WRITE_GRACE_SECONDS,
     MANUFACTURER,
+    VALVE_ACTION_MAX_RETRY_SECONDS,
+    VALVE_ACTION_RETRY_INTERVAL_SECONDS,
 )
 from .pylksystems import (
     LKSystemsManager,
@@ -63,7 +68,13 @@ _LOGGER = logging.getLogger(__name__)
 CONSECUTIVE_FAILURE_THRESHOLD = 3
 
 # Define the platforms we support
-PLATFORMS = [Platform.SENSOR, Platform.CLIMATE, Platform.NUMBER, Platform.BUTTON]
+PLATFORMS = [
+    Platform.SENSOR,
+    Platform.CLIMATE,
+    Platform.NUMBER,
+    Platform.BUTTON,
+    Platform.VALVE,
+]
 
 
 class LkStructureResp(TypedDict):
@@ -290,6 +301,21 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         # stale value until the next regular poll (up to a full
         # update_interval later) picked up the change.
         self._leak_detection_refresh_unsub: dict[str, CALLBACK_TYPE] = {}
+
+        # Cancel handle for each device's pending
+        # _schedule_valve_state_confirmation() call, if any - see that
+        # method's own docstring.
+        self._valve_action_unsub: dict[str, CALLBACK_TYPE] = {}
+
+        # Whether a device is currently mid-open/close, per device
+        # identity - True while closing, False while opening, absent once
+        # confirmed (or given up on). valve.py's is_closing/is_opening
+        # read this directly, so the entity shows a transitional state
+        # for the real time the physical motor takes to move instead of
+        # flashing through whatever intermediate (possibly stale) reads
+        # _schedule_valve_state_confirmation()'s retries publish along
+        # the way.
+        self.valve_action_pending: dict[str, bool] = {}
 
         # Initialize coordinator with update interval
         super().__init__(
@@ -636,15 +662,155 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         if unsub := self._leak_detection_refresh_unsub.pop(device_identity, None):
             unsub()
 
+    def mark_valve_action_pending(
+        self, device_identity: str, expect_closed: bool
+    ) -> None:
+        """Show a device as opening/closing straight away.
+
+        Called by valve.py right before it even issues the open/close
+        write, not just once _schedule_valve_state_confirmation()'s
+        confirmation retries start - the write itself (login and the API
+        call) goes through the same unbounded Retry-After-honoring
+        network layer as any other request, so it can itself take a long
+        time (confirmed missing live: a slow write left the entity
+        showing nothing until the frontend's own optimistic toggle
+        reverted). See valve_action_pending's own comment for why
+        tracking this at all matters.
+        """
+        self._cancel_valve_action_confirmation(device_identity)
+        self.valve_action_pending[device_identity] = expect_closed
+        self.async_update_listeners()
+
+    def clear_valve_action_pending(self, device_identity: str) -> None:
+        """Abort a pending open/close confirmation without assuming
+        anything about the outcome - for when the write itself never
+        got attempted (e.g. the device wasn't found), so there's nothing
+        to confirm and nothing will otherwise resolve the pending state
+        mark_valve_action_pending() just set.
+        """
+        self._cancel_valve_action_confirmation(device_identity)
+        self.valve_action_pending.pop(device_identity, None)
+        self.async_update_listeners()
+
+    def _schedule_valve_state_confirmation(
+        self, device_identity: str, expect_closed: bool
+    ) -> None:
+        """After an open/close write, poll the cloud every
+        VALVE_ACTION_RETRY_INTERVAL_SECONDS until it confirms the valve
+        actually reached the requested state, giving up after
+        VALVE_ACTION_MAX_RETRY_SECONDS - see that constant's own comment
+        for what happens then.
+        """
+        self.mark_valve_action_pending(device_identity, expect_closed)
+        retry_deadline = dt_util.utcnow() + timedelta(
+            seconds=VALVE_ACTION_MAX_RETRY_SECONDS
+        )
+
+        def _track_at(when: datetime) -> None:
+            self._valve_action_unsub[device_identity] = async_track_point_in_time(
+                self.hass, _check_valve_state, when
+            )
+
+        def _resolve() -> None:
+            self.valve_action_pending.pop(device_identity, None)
+            # force_cubic_secure_configuration_update() below already
+            # notified listeners once with this check's raw fetch -
+            # entities reading valve_action_pending (is_closing/
+            # is_opening) need a second notification to pick up that it
+            # just cleared, or they're stuck showing the transitional
+            # state until the next regular poll.
+            self.async_update_listeners()
+
+        def _give_up() -> None:
+            # HA already issued the write - assume it succeeded rather
+            # than leave the entity showing a stale pre-action reading
+            # for longer than VALVE_ACTION_MAX_RETRY_SECONDS. Wrong only
+            # if the write itself failed downstream of a successful API
+            # call, in which case the next regular poll corrects it.
+            self.data["cubic_devices"][device_identity]["configuration"][
+                "valveState"
+            ] = (
+                CUBIC_SECURE_VALVE_STATE_CLOSED
+                if expect_closed
+                else CUBIC_SECURE_VALVE_STATE_OPEN
+            )
+            _resolve()
+            _LOGGER.debug(
+                "Giving up on confirming valve %s reached the requested "
+                "state after %ss - assuming it did, the regular poll "
+                "will correct this if not",
+                device_identity,
+                VALVE_ACTION_MAX_RETRY_SECONDS,
+            )
+
+        async def _check_valve_state(_scheduled_for: datetime) -> None:
+            self._valve_action_unsub.pop(device_identity, None)
+            remaining = (retry_deadline - dt_util.utcnow()).total_seconds()
+            if remaining <= 0:
+                _give_up()
+                return
+            try:
+                # A bounded wait, not an open-ended await: LK rate-limits
+                # this specific endpoint (confirmed empirically, up to a
+                # 93s Retry-After observed on a real attempt) and
+                # pylksystems correctly honors it - meaning a single fetch
+                # can, on its own, take longer than the entire retry
+                # window. Passively waiting for it to finish before
+                # checking the deadline would let one slow attempt block
+                # the entity on a transitional state well past
+                # VALVE_ACTION_MAX_RETRY_SECONDS, the opposite of what
+                # that cap is for. Abandoning it here, rather than only
+                # ignoring its result afterwards, is what actually bounds
+                # the wait.
+                fetched = await asyncio.wait_for(
+                    self.force_cubic_secure_configuration_update(device_identity),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                _give_up()
+                return
+            if not fetched:
+                return
+
+            now = dt_util.utcnow()
+            valve_state = self.data["cubic_devices"][device_identity][
+                "configuration"
+            ].get("valveState")
+            actually_closed = valve_state == CUBIC_SECURE_VALVE_STATE_CLOSED
+
+            if actually_closed == expect_closed:
+                _resolve()
+                _LOGGER.debug(
+                    "Valve %s confirmed %s",
+                    device_identity,
+                    "closed" if expect_closed else "open",
+                )
+                return
+            if now >= retry_deadline:
+                _give_up()
+                return
+
+            _track_at(now + timedelta(seconds=VALVE_ACTION_RETRY_INTERVAL_SECONDS))
+
+        _track_at(dt_util.utcnow() + timedelta(seconds=VALVE_ACTION_RETRY_INTERVAL_SECONDS))
+
+    def _cancel_valve_action_confirmation(self, device_identity: str) -> None:
+        """Cancel a device's pending valve-state check, if one is scheduled."""
+        if unsub := self._valve_action_unsub.pop(device_identity, None):
+            unsub()
+
     async def async_shutdown(self) -> None:
         """Cancel any scheduled call, and ignore new runs.
 
-        Also cancels every pending leak-detection expiry check - they'd
-        otherwise fire against a torn-down coordinator after unload.
+        Also cancels every pending leak-detection expiry check and
+        valve-state confirmation - they'd otherwise fire against a
+        torn-down coordinator after unload.
         """
         await super().async_shutdown()
         for device_identity in list(self._leak_detection_refresh_unsub):
             self._cancel_leak_detection_expiry_refresh(device_identity)
+        for device_identity in list(self._valve_action_unsub):
+            self._cancel_valve_action_confirmation(device_identity)
 
     async def _update_cubic_secure_configuration(
         self, device_identity: str, *, force_update: bool
@@ -1182,6 +1348,48 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
 def cubic_secure_device_identities(coordinator: LKSystemCoordinator) -> list[str]:
     """Return the device identities of every Cubic Secure device on the account."""
     return list(coordinator.data.get("cubic_devices", {}))
+
+
+def cubic_secure_configuration(
+    coordinator: LKSystemCoordinator, device_identity: str
+) -> dict[str, Any]:
+    """Return a Cubic Secure device's last-fetched configuration dict.
+
+    Configuration (valveState, firmwareVersion, ...) is fetched
+    separately from measurement data and can fail independently, so this
+    is always defensive about it being missing.
+    """
+    cubic_device = coordinator.data["cubic_devices"][device_identity]
+    return cubic_device.get("configuration") or {}
+
+
+async def async_call_cubic_secure_service(
+    hass: HomeAssistant,
+    device_identity: str,
+    service: str,
+    extra_data: dict[str, Any] | None = None,
+) -> bool:
+    """Resolve a Cubic Secure device identity to its registered device and
+    call one of this integration's own services on it.
+
+    Shared by every platform whose action is "call an existing lksystems
+    service for this device" (button.py, valve.py, ...), so the device
+    lookup and its "not registered" error handling exist in one place.
+    Returns whether the service was actually called.
+    """
+    device_entry = dr.async_get(hass).async_get_device(
+        identifiers={(DOMAIN, device_identity)}
+    )
+    if device_entry is None:
+        _LOGGER.error(
+            "No registered device found for %s, cannot call %s", device_identity, service
+        )
+        return False
+
+    await hass.services.async_call(
+        DOMAIN, service, {"device_id": device_entry.id, **(extra_data or {})}, blocking=True
+    )
+    return True
 
 
 def cubic_secure_device_info(
