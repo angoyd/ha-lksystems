@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without a leading v (e.g. 0.4.3-alpha)"
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Require a release to be cut from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "Releases must be cut from main, not ${{ github.ref }}." >&2
+          exit 1
+
+      - name: Reject a version string that isn't a plain word
+        run: |
+          version="${{ inputs.version }}"
+          if [[ ! "$version" =~ ^[A-Za-z0-9.-]+$ ]]; then
+            echo "Version '$version' contains characters other than letters, digits, dots, and hyphens." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Reject a version that's already been released
+        run: |
+          if git rev-parse "v${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "Tag v${{ inputs.version }} already exists." >&2
+            exit 1
+          fi
+
+      - name: Bump manifest.json's version
+        run: |
+          manifest=custom_components/lksystems/manifest.json
+          before=$(grep -o '"version": "[^"]*"' "$manifest")
+          sed -i -E 's/"version": "[^"]*"/"version": "${{ inputs.version }}"/' "$manifest"
+          after=$(grep -o '"version": "[^"]*"' "$manifest")
+          if [ "$before" = "$after" ]; then
+            echo "manifest.json's version line wasn't found or didn't change." >&2
+            exit 1
+          fi
+          echo "$before -> $after"
+
+      - name: Commit the version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add custom_components/lksystems/manifest.json
+          git commit -m "Bump version to ${{ inputs.version }}"
+          git push origin HEAD:main
+
+      - name: Tag the release
+        run: |
+          git tag "v${{ inputs.version }}"
+          git push origin "v${{ inputs.version }}"
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease_flag=()
+          case "${{ inputs.version }}" in
+            *alpha*|*beta*|*rc*) prerelease_flag=(--prerelease) ;;
+          esac
+          gh release create "v${{ inputs.version }}" "${prerelease_flag[@]}" \
+            --title "v${{ inputs.version }}" \
+            --generate-notes
