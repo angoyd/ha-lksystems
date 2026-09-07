@@ -369,7 +369,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             temperature: The temperature value in tenths of a degree (e.g. 215 = 21.5°C)
 
         Returns:
-            Result of the API call
+            True if the temperature was set successfully, False otherwise.
         """
         _LOGGER.debug("Setting temperature for device %s to %s", device_id, temperature)
 
