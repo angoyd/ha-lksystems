@@ -368,37 +368,12 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             temperature: The temperature value in tenths of a degree (e.g. 215 = 21.5°C)
 
         Returns:
-            Result of the API call
+            True if the temperature was set successfully, False otherwise.
         """
         _LOGGER.debug("Setting temperature for device %s to %s", device_id, temperature)
 
         try:
-            # Create a new instance of LKSystemsManager for this operation
-            username = self._entry.data.get(CONF_USERNAME)
-            password = self._entry.data.get(CONF_PASSWORD)
-
-            async with LKSystemsManager(username, password) as lk_inst:
-                # Use existing token if available
-                stored_tokens = TOKEN_STORAGE.get(self._entry_id, {})
-                stored_jwt = stored_tokens.get("jwt")
-
-                if stored_jwt and is_token_valid(stored_jwt):
-                    lk_inst.jwt_token = stored_jwt
-                    lk_inst.refresh_token = stored_tokens.get("refresh")
-                else:
-                    # Login if no valid token
-                    if not await lk_inst.login():
-                        _LOGGER.error("Login failed when setting temperature")
-                        return False
-
-                    # Store the new tokens
-                    TOKEN_STORAGE[self._entry_id] = {
-                        "jwt": lk_inst.jwt_token,
-                        "refresh": lk_inst.refresh_token,
-                        "expiry": dt_util.utcnow().timestamp() + 3600,
-                    }
-
-                # Call the LKSystemsManager method to set the temperature
+            async with self._authenticated_client() as lk_inst:
                 result = await lk_inst.set_thermostat_temperature(
                     device_id, temperature
                 )
@@ -414,6 +389,9 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
 
                 return True
 
+        except _LoginFailed:
+            _LOGGER.error("Login failed when setting temperature")
+            return False
         except Exception as ex:
             _LOGGER.error("Failed to set temperature: %s", ex)
             return False
