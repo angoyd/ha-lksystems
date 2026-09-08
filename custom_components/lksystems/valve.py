@@ -11,12 +11,12 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import (
     LKSystemCoordinator,
-    async_call_cubic_secure_service,
     cubic_secure_configuration,
     cubic_secure_device_identities,
     cubic_secure_device_info,
 )
 from .const import ATTRIBUTION, CUBIC_SECURE_VALVE_STATE_CLOSED, DOMAIN
+from .services import close_valve_for_serial, open_valve_for_serial
 
 
 async def async_setup_entry(
@@ -37,15 +37,14 @@ class LKCubicSecureValve(CoordinatorEntity[LKSystemCoordinator], ValveEntity):
     Reflects live coordinator data (like the sibling sensors), so it
     picks up a state change from any source - a scheduled poll, or the
     valve being toggled from the vendor app - not just its own actions.
-    Open/close delegate to the existing open_valve/close_valve services
-    (rather than duplicating their login/error-handling), then confirm
-    the valve actually reached that state via
-    _schedule_valve_state_confirmation() - the physical motor takes on
+    Open/close call close_valve_for_serial/open_valve_for_serial directly
+    (sharing one session between the write and its immediate confirmation
+    read, rather than going through the service-call layer), then let
+    the coordinator decide whether that confirmed it already or a
+    confirmation retry loop is still needed - the physical motor takes on
     the order of 10-30s to finish moving (confirmed against a real
-    device), so a single immediate refresh right after the write would
-    just read a stale pre-action snapshot (see that method's own
-    docstring). Doesn't report a position: the API only exposes
-    open/closed, not a percentage.
+    device), so it usually is. Doesn't report a position: the API only
+    exposes open/closed, not a percentage.
     """
 
     _attr_attribution = ATTRIBUTION
@@ -101,23 +100,22 @@ class LKCubicSecureValve(CoordinatorEntity[LKSystemCoordinator], ValveEntity):
 
     async def async_open_valve(self) -> None:
         """Open the valve."""
-        await self._async_call_valve_service("open_valve")
+        await self._write_valve_state(expect_closed=False)
 
     async def async_close_valve(self) -> None:
         """Close the valve."""
-        await self._async_call_valve_service("close_valve")
+        await self._write_valve_state(expect_closed=True)
 
-    async def _async_call_valve_service(self, service: str) -> None:
-        expect_closed = service == "close_valve"
-        # Marked pending before the write below, not just once its
-        # confirmation retries start - the write itself (login, then the
-        # API call) can take a while too (see
+    async def _write_valve_state(self, *, expect_closed: bool) -> None:
+        # Marked pending before the write below, not just once a
+        # confirmation retry loop might start - the write itself (login,
+        # then the API call) can take a while too (see
         # coordinator.mark_valve_action_pending's own docstring).
         self.coordinator.mark_valve_action_pending(self._device_identity, expect_closed)
-        called = await async_call_cubic_secure_service(self.hass, self._device_identity, service)
-        if called:
-            self.coordinator._schedule_valve_state_confirmation(
-                self._device_identity, expect_closed
-            )
-        else:
-            self.coordinator.clear_valve_action_pending(self._device_identity)
+        write_for_serial = close_valve_for_serial if expect_closed else open_valve_for_serial
+        write_succeeded = await write_for_serial(
+            self.hass, self.coordinator.entry, self._device_identity
+        )
+        self.coordinator.handle_valve_write_result(
+            self._device_identity, expect_closed, write_succeeded
+        )

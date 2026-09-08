@@ -91,9 +91,9 @@ async def test_action_calls_the_client_and_refreshes(
         await hass.services.async_call(
             "valve", ha_service, {"entity_id": valve_entity_id}, blocking=True
         )
-        # The confirmation that the valve actually reached the requested
-        # state is scheduled to check a few seconds later, not
-        # immediately - see LKSystemCoordinator._schedule_valve_state_confirmation.
+        # Already resolved by the write's own shared-session confirmation
+        # read below, but a stray extra tick must still be a no-op rather
+        # than reopen the retry loop against a resolved action.
         async_fire_time_changed(
             hass, dt_util.utcnow() + timedelta(seconds=VALVE_ACTION_RETRY_INTERVAL_SECONDS)
         )
@@ -101,6 +101,39 @@ async def test_action_calls_the_client_and_refreshes(
 
     assert (client_call, CUBIC_IDENTITY) in fake_manager.calls
     assert hass.states.get(valve_entity_id).state == resulting_state
+
+
+@pytest.mark.parametrize(
+    ("ha_service", "starting_state", "resulting_state"),
+    [
+        ("close_valve", "open", "closed"),
+        ("open_valve", "closed", "open"),
+    ],
+)
+async def test_resolves_immediately_when_confirmation_read_already_matches(
+    hass, fake_manager, ha_service, starting_state, resulting_state
+):
+    """The write and its confirmation read share one session (see
+    close_valve_for_serial/open_valve_for_serial) - if that read already
+    shows the requested state, there's no reason to wait out a full
+    VALVE_ACTION_RETRY_INTERVAL_SECONDS for news that already arrived."""
+    fake_manager.cubic_configuration_data = build_cubic_configuration(
+        valve_state=starting_state
+    )
+    await setup_entry(hass, fake_manager)
+    valve_entity_id = entity_id(hass, "valve", _valve_unique_id(CUBIC_IDENTITY))
+    fake_manager.cubic_configurations_by_device[CUBIC_IDENTITY] = build_cubic_configuration(
+        valve_state=resulting_state
+    )
+    fake_manager.calls.clear()
+
+    with patch_all_managers(fake_manager):
+        await hass.services.async_call(
+            "valve", ha_service, {"entity_id": valve_entity_id}, blocking=True
+        )
+
+        assert hass.states.get(valve_entity_id).state == resulting_state
+        assert fake_manager.calls.count(("login",)) == 1
 
 
 @pytest.mark.parametrize(
