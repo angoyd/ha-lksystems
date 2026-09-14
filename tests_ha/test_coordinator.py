@@ -51,10 +51,15 @@ from custom_components.lksystems.repairs import _issue_id
 from .conftest import (
     CUBIC_IDENTITY,
     CUBIC_IDENTITY_2,
+    CUBIC_IDENTITY_3,
     HUB_CHILD_MAC,
+    HUB_CHILD_MAC_2,
     HUB_IDENTITY,
+    HUB_IDENTITY_2,
     SENSOR_MAC,
+    SENSOR_MAC_2,
     THERMOSTAT_MAC,
+    THERMOSTAT_MAC_2,
     build_cubic_configuration,
     build_live_config_without_mute_leak,
     get_issue,
@@ -225,7 +230,8 @@ class TestAsyncUpdateData:
         with _patch_manager(fake_manager):
             data = await coordinator._async_update_data()
 
-        assert data["realestateId"] == "realestate-1"
+        assert len(data["realestates"]) == 1
+        assert data["realestates"][0]["realestateId"] == "realestate-1"
 
         # Cubic Secure device
         cubic_device = data["cubic_devices"][CUBIC_IDENTITY]
@@ -522,6 +528,59 @@ class TestMultipleCubicSecureDevices:
         assert second["last_measurement"]["volumeTotal"] == 99000
         assert first["configuration"]["valveState"] == "open"
         assert second["configuration"]["valveState"] == "closed"
+
+
+class TestMultipleRealestates:
+    """Devices split across two realestates on one account used to lose the
+    second realestate entirely, since get_user_structure() indexed into the
+    API's response array with res[0] instead of keeping every entry.
+    """
+
+    async def test_devices_from_both_realestates_are_present(
+        self, hass, fake_manager_with_two_realestates
+    ):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager_with_two_realestates):
+            data = await coordinator._async_update_data()
+
+        assert set(data["cubic_devices"]) == {CUBIC_IDENTITY, CUBIC_IDENTITY_3}
+        assert set(data["hub_data"]) == {HUB_IDENTITY, HUB_IDENTITY_2}
+        assert {THERMOSTAT_MAC, THERMOSTAT_MAC_2} <= set(data["device_details"])
+        assert {SENSOR_MAC, SENSOR_MAC_2} <= set(data["device_details"])
+
+    async def test_each_realestates_own_devices_keep_their_own_data(
+        self, hass, fake_manager_with_two_realestates
+    ):
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager_with_two_realestates):
+            data = await coordinator._async_update_data()
+
+        first_cubic = data["cubic_devices"][CUBIC_IDENTITY]
+        second_cubic = data["cubic_devices"][CUBIC_IDENTITY_3]
+        assert first_cubic["machine_info"]["zone"]["zoneName"] == "Utility Room"
+        assert second_cubic["machine_info"]["zone"]["zoneName"] == "Basement"
+        assert first_cubic["last_measurement"]["volumeTotal"] == 45000
+        assert second_cubic["last_measurement"]["volumeTotal"] == 77000
+
+        assert (
+            data["device_details"][THERMOSTAT_MAC]["measurement"]["currentTemperature"]
+            == 205
+        )
+        assert (
+            data["device_details"][THERMOSTAT_MAC_2]["measurement"][
+                "currentTemperature"
+            ]
+            == 175
+        )
+
+        assert data["hub_data"][HUB_IDENTITY]["devices"][0]["mac"] == HUB_CHILD_MAC
+        assert (
+            data["hub_data"][HUB_IDENTITY_2]["devices"][0]["mac"] == HUB_CHILD_MAC_2
+        )
 
 
 class TestForceDeviceUpdate:

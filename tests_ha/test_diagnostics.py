@@ -36,12 +36,12 @@ async def test_diagnostics_redacts_home_address(hass, fake_manager):
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
 
-    coordinator_data = diagnostics["coordinator_data"]
-    assert coordinator_data["address"] == "**REDACTED**"
-    assert coordinator_data["city"] == "**REDACTED**"
-    assert coordinator_data["zip"] == "**REDACTED**"
-    assert coordinator_data["ownerId"] == "**REDACTED**"
-    assert coordinator_data["realestateId"] == "**REDACTED**"
+    realestate = diagnostics["coordinator_data"]["realestates"][0]
+    assert realestate["address"] == "**REDACTED**"
+    assert realestate["city"] == "**REDACTED**"
+    assert realestate["zip"] == "**REDACTED**"
+    assert realestate["ownerId"] == "**REDACTED**"
+    assert realestate["realestateId"] == "**REDACTED**"
 
 
 async def test_diagnostics_redacts_device_mac_addresses(hass, fake_manager):

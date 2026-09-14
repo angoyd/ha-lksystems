@@ -82,7 +82,7 @@ class TestLogin:
 
 
 class TestGetUserStructure:
-    async def test_success_uses_first_element_of_list(self, manager):
+    async def test_success_keeps_full_list_of_realestates(self, manager):
         manager.userid = "user-123"
         api_response = [{"realestateId": "re-1", "cacheUpdated": 111}]
 
@@ -96,7 +96,30 @@ class TestGetUserStructure:
                 result = await manager.get_user_structure()
 
         assert result is True
-        assert manager.user_structure == {"realestateId": "re-1", "cacheUpdated": 111}
+        assert manager.user_structure == api_response
+
+    async def test_second_realestate_is_not_dropped(self, manager):
+        """An account whose devices are split across two properties used to
+        lose the second realestate entirely - get_user_structure() indexed
+        into the response with res[0] instead of keeping every entry.
+        """
+        manager.userid = "user-123"
+        api_response = [
+            {"realestateId": "re-1", "cacheUpdated": 111},
+            {"realestateId": "re-2", "cacheUpdated": 222},
+        ]
+
+        with aioresponses() as m:
+            m.get(
+                BASE_URL + "service/users/user/user-123/structure/1",
+                payload=api_response,
+                status=200,
+            )
+            async with manager:
+                result = await manager.get_user_structure()
+
+        assert result is True
+        assert manager.user_structure == api_response
 
     async def test_empty_list_response_does_not_raise(self, manager):
         """Account with no devices/realestates: API returns `[]`.
@@ -239,6 +262,88 @@ class TestGetDevices:
         # Falls back to True because devices already exist locally.
         assert result is True
         assert manager.devices["devices"] == [{"mac": "AA"}]
+
+
+class TestExtractDevicesFromStructure:
+    """extract_devices_from_structure() and get_arc_hubs_from_structure()
+    read manager._user_structure directly - the list of every realestate on
+    the account, as get_user_structure() now stores it.
+    """
+
+    def test_extracts_devices_from_every_realestate(self, manager):
+        manager._user_structure = [
+            {
+                "cacheUpdated": 111,
+                "realestateMachines": [
+                    {
+                        "deviceType": "cubicsecure",
+                        "deviceRole": "cubicsecure",
+                        "identity": "cubic-1",
+                    },
+                    {
+                        "deviceGroup": "arc",
+                        "deviceType": "arc-sense",
+                        "deviceRole": "sense",
+                        "identity": "AA:BB:CC",
+                        "zone": "Living Room",
+                    },
+                ],
+            },
+            {
+                "cacheUpdated": 222,
+                "realestateMachines": [
+                    {
+                        "deviceGroup": "arc",
+                        "deviceType": "arc-sense",
+                        "deviceRole": "sense",
+                        "identity": "DD:EE:FF",
+                        "zone": "Kitchen",
+                    },
+                ],
+            },
+        ]
+
+        extracted = manager.extract_devices_from_structure()
+
+        macs = {d["mac"] for d in extracted["devices"]}
+        # Cubic Secure devices are skipped here - handled separately.
+        assert macs == {"AA:BB:CC", "DD:EE:FF"}
+        first_realestate_device = next(
+            d for d in extracted["devices"] if d["mac"] == "AA:BB:CC"
+        )
+        second_realestate_device = next(
+            d for d in extracted["devices"] if d["mac"] == "DD:EE:FF"
+        )
+        assert first_realestate_device["cacheUpdated"] == 111
+        assert second_realestate_device["cacheUpdated"] == 222
+
+    def test_get_arc_hubs_finds_hubs_across_every_realestate(self, manager):
+        manager._user_structure = [
+            {
+                "realestateMachines": [
+                    {
+                        "deviceGroup": "arc",
+                        "deviceType": "arc-hub",
+                        "deviceRole": "arc-hub",
+                        "identity": "hub-1",
+                    },
+                ],
+            },
+            {
+                "realestateMachines": [
+                    {
+                        "deviceGroup": "arc",
+                        "deviceType": "arc-hub",
+                        "deviceRole": "arc-hub",
+                        "identity": "hub-2",
+                    },
+                ],
+            },
+        ]
+
+        arc_hubs = manager.get_arc_hubs_from_structure()
+
+        assert {hub["identity"] for hub in arc_hubs} == {"hub-1", "hub-2"}
 
 
 class TestCubicSecureMeasurement:

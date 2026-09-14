@@ -53,6 +53,7 @@ from .pylksystems import (
     LKSystemsError,
     LKThresholds,
     LKPressureThresholds,
+    iter_realestate_machines,
 )
 from .redact import mask_username
 from . import repairs
@@ -80,6 +81,17 @@ PLATFORMS = [
 class LkStructureResp(TypedDict):
     """API response structure"""
 
+    realestates: list["RealestateInfo"]
+    cubic_devices: Dict[str, "LkCubicDeviceData"]
+    update_time: str
+    next_update_time: str
+
+
+class RealestateInfo(TypedDict):
+    """A single realestate's own identity fields, kept one per realestate
+    (LkStructureResp.realestates) rather than flattened onto the response,
+    since an account can have more than one."""
+
     realestateId: str
     name: str
     city: str
@@ -87,10 +99,7 @@ class LkStructureResp(TypedDict):
     zip: str
     country: str
     ownerId: str
-    cubic_devices: Dict[str, "LkCubicDeviceData"]
     cacheUpdated: int
-    update_time: str
-    next_update_time: str
 
 
 class LkCubicDeviceData(TypedDict):
@@ -1025,16 +1034,15 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                     _LOGGER.error("Failed to get user structure, abort update")
                     raise UpdateFailed("Unknown error get_user_structure")
 
-                # Initialize response structure
+                # Initialize response structure. Every realestate on the
+                # account keeps its own entry - user_structure is the API's
+                # full list, not just the first realestate - so devices
+                # registered under a second property aren't dropped.
                 resp: LkStructureResp = {
-                    "realestateId": lk_inst.user_structure["realestateId"],
-                    "name": lk_inst.user_structure["name"],
-                    "city": lk_inst.user_structure["city"],
-                    "address": lk_inst.user_structure["address"],
-                    "zip": lk_inst.user_structure["zip"],
-                    "country": lk_inst.user_structure["country"],
-                    "ownerId": lk_inst.user_structure["ownerId"],
-                    "cacheUpdated": lk_inst.user_structure["cacheUpdated"],
+                    "realestates": [
+                        {key: realestate[key] for key in RealestateInfo.__annotations__}
+                        for realestate in lk_inst.user_structure
+                    ],
                     "cubic_devices": {},
                     "devices": [],
                     "device_details": {},  # Will store detailed information about each device
@@ -1049,231 +1057,230 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                 device_identities = []
                 arc_sense_devices = []  # Track Arc sense devices for direct updates
 
-                # Process all devices from structure
-                if "realestateMachines" in lk_inst.user_structure:
-                    for machine in lk_inst.user_structure["realestateMachines"]:
-                        # Skip if no identity
-                        if not machine.get("identity"):
-                            continue
+                # Process all devices from every realestate on the account
+                for realestate, machine in iter_realestate_machines(
+                    lk_inst.user_structure
+                ):
+                    # Skip if no identity
+                    if not machine.get("identity"):
+                        continue
 
-                        device_identity = machine.get("identity")
-                        device_identities.append(device_identity)
+                    device_identity = machine.get("identity")
+                    device_identities.append(device_identity)
 
-                        device_data = {
-                            "deviceTitle": machine,
-                            "mac": machine.get("identity"),
-                            "cacheUpdated": lk_inst.user_structure.get(
-                                "cacheUpdated", 0
-                            ),
-                        }
-                        devices.append(device_data)
+                    device_data = {
+                        "deviceTitle": machine,
+                        "mac": machine.get("identity"),
+                        "cacheUpdated": realestate.get("cacheUpdated", 0),
+                    }
+                    devices.append(device_data)
 
-                        # Track Arc sense devices for direct measurements
-                        if (
-                            machine.get("deviceGroup") == "arc"
-                            and machine.get("deviceType") == "arc-sense"
-                        ):
-                            arc_sense_devices.append(device_identity)
+                    # Track Arc sense devices for direct measurements
+                    if (
+                        machine.get("deviceGroup") == "arc"
+                        and machine.get("deviceType") == "arc-sense"
+                    ):
+                        arc_sense_devices.append(device_identity)
 
-                        # Step 3: Get detailed information for each device
-                        if machine.get("deviceGroup") == "arc":
-                            if machine.get("deviceType") == "arc-sense":
-                                # Fetch measurement data - always force update to get latest values
-                                if await lk_inst.get_device_measurement(
-                                    device_identity, force_update=True
-                                ):
-                                    resp["device_details"][device_identity] = {
-                                        "measurement": lk_inst.device_measurements.get(
-                                            device_identity
-                                        )
-                                    }
-                                    # Also add to the device in the devices list
-                                    device_data["measurement"] = (
-                                        lk_inst.device_measurements.get(device_identity)
-                                    )
-
-                                # Fetch configuration data (used for
-                                # thermostat-role devices by climate.py)
-                                if await lk_inst.get_device_configuration(
-                                    device_identity,
-                                    force_update=device_identity in forced_device_ids,
-                                ):
-                                    if device_identity not in resp["device_details"]:
-                                        resp["device_details"][device_identity] = {}
-                                    resp["device_details"][device_identity][
-                                        "configuration"
-                                    ] = lk_inst.device_configurations.get(
+                    # Step 3: Get detailed information for each device
+                    if machine.get("deviceGroup") == "arc":
+                        if machine.get("deviceType") == "arc-sense":
+                            # Fetch measurement data - always force update to get latest values
+                            if await lk_inst.get_device_measurement(
+                                device_identity, force_update=True
+                            ):
+                                resp["device_details"][device_identity] = {
+                                    "measurement": lk_inst.device_measurements.get(
                                         device_identity
                                     )
-                                    # Also add to the device in the devices list
-                                    device_data["configuration"] = (
-                                        lk_inst.device_configurations.get(
-                                            device_identity
-                                        )
+                                }
+                                # Also add to the device in the devices list
+                                device_data["measurement"] = (
+                                    lk_inst.device_measurements.get(device_identity)
+                                )
+
+                            # Fetch configuration data (used for
+                            # thermostat-role devices by climate.py)
+                            if await lk_inst.get_device_configuration(
+                                device_identity,
+                                force_update=device_identity in forced_device_ids,
+                            ):
+                                if device_identity not in resp["device_details"]:
+                                    resp["device_details"][device_identity] = {}
+                                resp["device_details"][device_identity][
+                                    "configuration"
+                                ] = lk_inst.device_configurations.get(
+                                    device_identity
+                                )
+                                # Also add to the device in the devices list
+                                device_data["configuration"] = (
+                                    lk_inst.device_configurations.get(
+                                        device_identity
                                     )
+                                )
 
-                            elif machine.get("deviceType") == "arc-hub":
-                                # Fetch hub data if available
-                                hub_id = device_identity
-                                if await lk_inst.get_hub_devices(hub_id):
-                                    if "hub_data" not in resp:
-                                        resp["hub_data"] = {}
-                                    resp["hub_data"][hub_id] = lk_inst.hub_devices
+                        elif machine.get("deviceType") == "arc-hub":
+                            # Fetch hub data if available
+                            hub_id = device_identity
+                            if await lk_inst.get_hub_devices(hub_id):
+                                if "hub_data" not in resp:
+                                    resp["hub_data"] = {}
+                                resp["hub_data"][hub_id] = lk_inst.hub_devices
 
-                                    # Process devices from this hub
-                                    if (
-                                        isinstance(lk_inst.hub_devices, dict)
-                                        and "devices" in lk_inst.hub_devices
-                                    ):
-                                        for hub_device in lk_inst.hub_devices[
-                                            "devices"
-                                        ]:
-                                            if (
+                                # Process devices from this hub
+                                if (
+                                    isinstance(lk_inst.hub_devices, dict)
+                                    and "devices" in lk_inst.hub_devices
+                                ):
+                                    for hub_device in lk_inst.hub_devices[
+                                        "devices"
+                                    ]:
+                                        if (
+                                            hub_device.get("mac")
+                                            and hub_device.get("mac")
+                                            not in device_identities
+                                        ):
+                                            device_identities.append(
                                                 hub_device.get("mac")
-                                                and hub_device.get("mac")
-                                                not in device_identities
-                                            ):
-                                                device_identities.append(
-                                                    hub_device.get("mac")
-                                                )
-                                                devices.append(hub_device)
+                                            )
+                                            devices.append(hub_device)
 
-                                                # Also fetch detailed data for hub devices
-                                                device_mac = hub_device.get("mac")
-                                                if device_mac:
-                                                    # Measurement data should already be in the hub devices
-                                                    if "measurement" in hub_device:
-                                                        if (
-                                                            device_mac
-                                                            not in resp[
-                                                                "device_details"
-                                                            ]
-                                                        ):
-                                                            resp["device_details"][
-                                                                device_mac
-                                                            ] = {}
+                                            # Also fetch detailed data for hub devices
+                                            device_mac = hub_device.get("mac")
+                                            if device_mac:
+                                                # Measurement data should already be in the hub devices
+                                                if "measurement" in hub_device:
+                                                    if (
+                                                        device_mac
+                                                        not in resp[
+                                                            "device_details"
+                                                        ]
+                                                    ):
                                                         resp["device_details"][
                                                             device_mac
-                                                        ]["measurement"] = hub_device[
-                                                            "measurement"
-                                                        ]
+                                                        ] = {}
+                                                    resp["device_details"][
+                                                        device_mac
+                                                    ]["measurement"] = hub_device[
+                                                        "measurement"
+                                                    ]
 
-                        # For cubic devices (if they exist)
-                        elif (
-                            machine.get("deviceType") == "cubicsecure"
-                            and machine.get("deviceRole") == "cubicsecure"
-                        ):
-                            resp["cubic_devices"][device_identity] = {
-                                "machine_info": machine
-                            }
+                    # For cubic devices (if they exist)
+                    elif (
+                        machine.get("deviceType") == "cubicsecure"
+                        and machine.get("deviceRole") == "cubicsecure"
+                    ):
+                        resp["cubic_devices"][device_identity] = {
+                            "machine_info": machine
+                        }
 
-                            # Try to get cubic measurements but don't fail if not available
-                            try:
-                                await lk_inst.get_cubic_secure_measurement(
-                                    device_identity
-                                )
+                        # Try to get cubic measurements but don't fail if not available
+                        try:
+                            await lk_inst.get_cubic_secure_measurement(
+                                device_identity
+                            )
 
-                                if lk_inst.cubic_secure_measurement is not None:
-                                    if self._should_bypass_cache(
-                                        device_identity,
-                                        forced_device_ids,
-                                        lk_inst.cubic_secure_measurement[
-                                            "cacheUpdated"
-                                        ],
-                                    ):
-                                        _LOGGER.debug(
-                                            "Cubic secure measurement is stale or a fresh fetch was requested, force update"
-                                        )
-                                        if not await lk_inst.get_cubic_secure_measurement(
-                                            device_identity, force_update=True
-                                        ):
-                                            _LOGGER.error(
-                                                "Failed to get cubic secure measurement, abort update"
-                                            )
-                                            raise UpdateFailed(
-                                                "Unknown error get_cubic_secure_measurement"
-                                            )
-
-                                resp["cubic_devices"][device_identity][
-                                    "last_measurement"
-                                ] = lk_inst.cubic_secure_measurement
-                                if not await lk_inst.get_cubic_secure_configuration(
-                                    device_identity
-                                ):
-                                    _LOGGER.error(
-                                        "Failed to get cubic secure configuration, abort update"
-                                    )
-                                    raise UpdateFailed(
-                                        "Unknown error get_cubic_secure_measurement"
-                                    )
-                                if lk_inst.cubic_secure_configuration is not None:
-                                    if self._should_bypass_cache(
-                                        device_identity,
-                                        forced_device_ids,
-                                        lk_inst.cubic_secure_configuration[
-                                            "cacheUpdated"
-                                        ],
-                                    ):
-                                        _LOGGER.debug(
-                                            "Cubic secure configuration is stale or a fresh fetch was requested, force update"
-                                        )
-                                        cached_configuration = (
-                                            lk_inst.cubic_secure_configuration
-                                        )
-                                        if not await lk_inst.get_cubic_secure_configuration(
-                                            device_identity, force_update=True
-                                        ):
-                                            _LOGGER.error(
-                                                "Failed to get cubic secure configuration, abort update"
-                                            )
-                                            raise UpdateFailed(
-                                                "Unknown error get_cubic_secure_configuration"
-                                            )
-                                        # The bypass fetch above polls the
-                                        # physical device live rather than
-                                        # LK's backend cache, and that
-                                        # response has a narrower schema
-                                        # (confirmed empirically: it never
-                                        # carries muteLeak) - carry over
-                                        # whatever the cached response has
-                                        # that the live one doesn't, so a
-                                        # cache-only field doesn't just
-                                        # vanish because this device was
-                                        # bypassed.
-                                        _fill_missing_keys(
-                                            lk_inst.cubic_secure_configuration,
-                                            cached_configuration,
-                                        )
-
-                                resp["cubic_devices"][device_identity][
-                                    "configuration"
-                                ] = lk_inst.cubic_secure_configuration
-                                self._reconcile_leak_detection_paused_until(
+                            if lk_inst.cubic_secure_measurement is not None:
+                                if self._should_bypass_cache(
                                     device_identity,
-                                    lk_inst.cubic_secure_configuration,
-                                    dt_util.utcnow(),
+                                    forced_device_ids,
+                                    lk_inst.cubic_secure_measurement[
+                                        "cacheUpdated"
+                                    ],
+                                ):
+                                    _LOGGER.debug(
+                                        "Cubic secure measurement is stale or a fresh fetch was requested, force update"
+                                    )
+                                    if not await lk_inst.get_cubic_secure_measurement(
+                                        device_identity, force_update=True
+                                    ):
+                                        _LOGGER.error(
+                                            "Failed to get cubic secure measurement, abort update"
+                                        )
+                                        raise UpdateFailed(
+                                            "Unknown error get_cubic_secure_measurement"
+                                        )
+
+                            resp["cubic_devices"][device_identity][
+                                "last_measurement"
+                            ] = lk_inst.cubic_secure_measurement
+                            if not await lk_inst.get_cubic_secure_configuration(
+                                device_identity
+                            ):
+                                _LOGGER.error(
+                                    "Failed to get cubic secure configuration, abort update"
                                 )
-                            except Exception as err:
-                                # Sensors index these keys directly, so they
-                                # must exist even on failure; reuse this
-                                # device's last known values if we have them.
-                                previous_device_data = (
-                                    (self.data or {})
-                                    .get("cubic_devices", {})
-                                    .get(device_identity, {})
+                                raise UpdateFailed(
+                                    "Unknown error get_cubic_secure_measurement"
                                 )
-                                device_entry = resp["cubic_devices"][device_identity]
-                                device_entry.setdefault(
-                                    "last_measurement",
-                                    previous_device_data.get("last_measurement"),
-                                )
-                                device_entry.setdefault(
-                                    "configuration",
-                                    previous_device_data.get("configuration"),
-                                )
-                                _LOGGER.warning(
-                                    "Error fetching cubic measurements: %s", str(err)
-                                )
+                            if lk_inst.cubic_secure_configuration is not None:
+                                if self._should_bypass_cache(
+                                    device_identity,
+                                    forced_device_ids,
+                                    lk_inst.cubic_secure_configuration[
+                                        "cacheUpdated"
+                                    ],
+                                ):
+                                    _LOGGER.debug(
+                                        "Cubic secure configuration is stale or a fresh fetch was requested, force update"
+                                    )
+                                    cached_configuration = (
+                                        lk_inst.cubic_secure_configuration
+                                    )
+                                    if not await lk_inst.get_cubic_secure_configuration(
+                                        device_identity, force_update=True
+                                    ):
+                                        _LOGGER.error(
+                                            "Failed to get cubic secure configuration, abort update"
+                                        )
+                                        raise UpdateFailed(
+                                            "Unknown error get_cubic_secure_configuration"
+                                        )
+                                    # The bypass fetch above polls the
+                                    # physical device live rather than
+                                    # LK's backend cache, and that
+                                    # response has a narrower schema
+                                    # (confirmed empirically: it never
+                                    # carries muteLeak) - carry over
+                                    # whatever the cached response has
+                                    # that the live one doesn't, so a
+                                    # cache-only field doesn't just
+                                    # vanish because this device was
+                                    # bypassed.
+                                    _fill_missing_keys(
+                                        lk_inst.cubic_secure_configuration,
+                                        cached_configuration,
+                                    )
+
+                            resp["cubic_devices"][device_identity][
+                                "configuration"
+                            ] = lk_inst.cubic_secure_configuration
+                            self._reconcile_leak_detection_paused_until(
+                                device_identity,
+                                lk_inst.cubic_secure_configuration,
+                                dt_util.utcnow(),
+                            )
+                        except Exception as err:
+                            # Sensors index these keys directly, so they
+                            # must exist even on failure; reuse this
+                            # device's last known values if we have them.
+                            previous_device_data = (
+                                (self.data or {})
+                                .get("cubic_devices", {})
+                                .get(device_identity, {})
+                            )
+                            device_entry = resp["cubic_devices"][device_identity]
+                            device_entry.setdefault(
+                                "last_measurement",
+                                previous_device_data.get("last_measurement"),
+                            )
+                            device_entry.setdefault(
+                                "configuration",
+                                previous_device_data.get("configuration"),
+                            )
+                            _LOGGER.warning(
+                                "Error fetching cubic measurements: %s", str(err)
+                            )
 
                 # Now directly fetch fresh measurement data for each Arc sense device
                 _LOGGER.info(
