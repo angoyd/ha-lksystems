@@ -372,8 +372,11 @@ class LKSystemsManager:
 
     async def login(self):
         """Login to LK systems and get userId"""
+        # Tracks whichever of the two requests below is currently in
+        # flight, so a failure is reported against the URL that actually
+        # failed rather than always the first one.
         endpoint = "auth/auth/login"
-        endpointUserId = "auth/auth/user"
+        userid_endpoint = "auth/auth/user"
         try:
             payload = {"email": self.username, "password": self.password}
             headers = {**self._get_headers()}
@@ -386,12 +389,13 @@ class LKSystemsManager:
                     self.jwt_token = data.get("accessToken")
                     self.refresh_token = data.get("refreshToken")
                     # Get userId
+                    endpoint = userid_endpoint
                     headers = {
                         **self._get_headers(),
                         "authorization": f"Bearer {self.jwt_token}",
                     }
                     async with self.session.get(
-                        self.BASE_URL + endpointUserId, headers=headers
+                        self.BASE_URL + endpoint, headers=headers
                     ) as responseUserid:
                         responseUserid.raise_for_status()
                         if responseUserid.status == 200:

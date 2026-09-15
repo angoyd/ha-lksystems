@@ -72,6 +72,35 @@ class TestLogin:
         assert manager.jwt_token == "tok-123"
         assert manager.userid is None
 
+    @pytest.mark.parametrize(
+        "userid_status",
+        [
+            401,  # raises ClientResponseError, caught by handle_client_error()
+            204,  # 2xx but not 200 - doesn't raise, falls through to the inline error log
+        ],
+    )
+    async def test_userid_lookup_failure_logs_the_userid_endpoint(
+        self, manager, caplog, userid_status
+    ):
+        """The userid lookup is a separate request from login, on a
+        different endpoint - an error from it should be logged against its
+        own URL, not the login endpoint that already succeeded.
+        """
+        with aioresponses() as m:
+            m.post(
+                BASE_URL + "auth/auth/login",
+                payload={"accessToken": "tok-123", "refreshToken": "refresh-123"},
+                status=200,
+            )
+            m.get(BASE_URL + "auth/auth/user", payload={}, status=userid_status)
+            async with manager:
+                with caplog.at_level(logging.ERROR):
+                    await manager.login()
+
+        messages = [record.getMessage() for record in caplog.records]
+        assert any(BASE_URL + "auth/auth/user" in msg for msg in messages)
+        assert not any(BASE_URL + "auth/auth/login" in msg for msg in messages)
+
     async def test_connection_error_is_handled(self, manager):
         with aioresponses() as m:
             m.post(BASE_URL + "auth/auth/login", exception=ClientConnectionError())
