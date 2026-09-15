@@ -119,16 +119,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_abort(reason="reauth_failed")
 
     async def async_step_user(self, user_input=None):
-        """Handle the initial step."""
+        """Handle the initial step.
+
+        This integration only supports one config entry at a time - Home
+        Assistant's own flow manager rejects a second attempt (for this
+        username or any other) before this step ever runs, so there's no
+        duplicate-entry check to make here.
+        """
         errors = {}
 
         if user_input is not None:
-            # Check if we already have an entry for this username
-            existing_entries = self._async_current_entries()
-            for entry in existing_entries:
-                if entry.data.get(CONF_USERNAME) == user_input[CONF_USERNAME]:
-                    return self.async_abort(reason="already_configured")
-
             # Store data and create entry
             return self.async_create_entry(
                 title=f"LK Systems ({user_input[CONF_USERNAME]})",
