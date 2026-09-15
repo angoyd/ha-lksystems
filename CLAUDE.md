@@ -103,6 +103,25 @@ to it (`gh issue edit <n> --add-assignee <username>`) before starting -
 that's the signal to anyone else looking at the tracker that it's actively
 being worked, not just open and unclaimed.
 
+### Labels
+
+Beyond GitHub's own defaults (`bug`, `enhancement`, `question`, `duplicate`,
+etc.), this repo has a few custom labels for states the defaults don't
+cover:
+
+- `tech-debt` - code cleanliness/duplication/dead-code work with no
+  user-facing behavior change (as opposed to `enhancement`, a new feature or
+  user-facing improvement).
+- `waiting-for-response` - blocked on a *specific* person providing a
+  *specific* piece of information (a data sample, a confirmation a fix
+  works) - we know exactly what's needed and from whom, and can act as soon
+  as it arrives.
+- `needs-more-evidence` - not yet well-understood enough to define what
+  "fixing" it would even look like - gathering reports/data points to find a
+  pattern, with no single person or answer that unblocks it. Distinct from
+  `waiting-for-response`: there, one specific reply moves things forward;
+  here, the next step itself isn't known yet.
+
 ## Before opening a pull request
 
 - Run `/simplify` (or an equivalent focused review) over the diff.
