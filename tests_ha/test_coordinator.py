@@ -63,6 +63,7 @@ from .conftest import (
     build_cubic_configuration,
     build_live_config_without_mute_leak,
     get_issue,
+    setup_entry,
     tiny_valve_retry_timings,
 )
 
@@ -153,6 +154,40 @@ class TestCoordinatorConstruction:
             LKSystemCoordinator(hass, entry)
 
         assert caplog.records == []
+
+
+class TestUpdateOptions:
+    async def test_changing_update_interval_does_not_log_above_info(
+        self, hass, fake_manager, caplog
+    ):
+        # Changing the update interval via the options flow is a routine,
+        # user-initiated action - it shouldn't show up in a user's log
+        # unless they've turned on debug logging.
+        entry = await setup_entry(hass, fake_manager)
+
+        with _patch_manager(fake_manager):
+            hass.config_entries.async_update_entry(
+                entry, options={CONF_UPDATE_INTERVAL: 30}
+            )
+            await hass.async_block_till_done()
+
+        # The reload itself logs plenty at debug/info (entity registry
+        # writes, platform loading) - only a WARNING+ from our own
+        # integration would mean this routine, user-initiated change is
+        # being over-logged.
+        lksystems_warnings = [
+            record
+            for record in caplog.records
+            if record.name.startswith("custom_components.lksystems")
+            and record.levelno >= logging.WARNING
+        ]
+        assert lksystems_warnings == []
+
+
+class TestLastSuccessfulCloudFetch:
+    """Restoring entity state across a restart needs a per-update
+    timestamp to judge whether a restored value is still fresh enough to
+    show."""
 
     async def test_last_successful_cloud_fetch_starts_none(self, hass):
         entry = _make_entry(hass)

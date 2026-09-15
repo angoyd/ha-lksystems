@@ -1528,9 +1528,10 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
         entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
     )
 
-    # If update interval changed, log it
+    # Changing the update interval is a routine, user-initiated action via
+    # the options flow, not a warning-worthy condition.
     if old_update_interval != new_update_interval:
-        _LOGGER.warning(
+        _LOGGER.info(
             "Update interval changed from %s to %s minutes",
             old_update_interval,
             new_update_interval,
