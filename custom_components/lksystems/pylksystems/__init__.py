@@ -101,6 +101,40 @@ def _retry_delay_for_response(response, attempt: int) -> float | None:
     return None
 
 
+def iter_realestate_machines(structures):
+    """Yield every (realestate, machine) pair across a list of realestate
+    structures - the shape get_user_structure() and get_devices()'s own
+    live fetch both return."""
+    for realestate in structures or []:
+        if isinstance(realestate, dict):
+            for machine in realestate.get("realestateMachines", []):
+                yield realestate, machine
+
+
+def _device_from_machine(machine, cache_updated):
+    """Build a device entry from one realestateMachines item, or None for
+    a Cubic Secure machine - those are handled through their own dedicated
+    endpoints rather than as a generic device."""
+    if (
+        machine.get("deviceType") == "cubicsecure"
+        and machine.get("deviceRole") == "cubicsecure"
+    ):
+        return None
+
+    device_data = {
+        "deviceTitle": machine,
+        "mac": machine.get("identity"),
+        "cacheUpdated": cache_updated,
+    }
+    if machine.get("deviceGroup") == "arc":
+        device_data["deviceGroup"] = "arc"
+        device_data["deviceType"] = machine.get("deviceType")
+        device_data["deviceRole"] = machine.get("deviceRole")
+        if "zone" in machine:
+            device_data["zone"] = machine["zone"]
+    return device_data
+
+
 # Add the missing LKSystemsError class
 class LKSystemsError(Exception):
     """Exception raised for LK Systems related errors."""
@@ -405,87 +439,70 @@ class LKSystemsManager:
         return self._cubic_secure_measurement
 
     async def get_user_structure(self):
-        """Fetch user secure measurement"""
+        """Fetch user structure"""
         endpoint = f"service/users/user/{self.userid}/structure/1"
         success, res = await self._get(endpoint)
         if success:
             if not res:
                 # Accounts with no devices/realestates registered get back
-                # an empty list rather than a missing structure. Treat that
-                # as "no structure available" instead of crashing on res[0].
+                # an empty list rather than a missing structure.
                 _LOGGER.warning(
                     "User structure response was empty - account has no "
                     "devices or realestates registered"
                 )
                 self._user_structure = None
                 return False
-            self._user_structure = res[0]
+            # The response is a list of every realestate on the account,
+            # not just one - keep all of them so devices registered under
+            # a second property aren't dropped.
+            self._user_structure = res
             return True
         return False
 
     @property
     def user_structure(self):
-        """Property for User Structure"""
+        """Property for the account's realestates, each with its own
+        devices - a list, since an account can have more than one."""
         return self._user_structure
 
     def get_arc_hubs_from_structure(self):
-        """Extract Arc hub devices from user structure."""
-        if not self._user_structure or "realestateMachines" not in self._user_structure:
+        """Extract Arc hub devices from every realestate in the user structure."""
+        if not self._user_structure:
             return []
 
-        arc_hubs = []
-        for machine in self._user_structure["realestateMachines"]:
+        return [
+            machine
+            for _, machine in iter_realestate_machines(self._user_structure)
             if (
                 machine.get("deviceGroup") == "arc"
                 and machine.get("deviceType") == "arc-hub"
                 and machine.get("deviceRole") == "arc-hub"
                 and machine.get("identity")
-            ):
-                arc_hubs.append(machine)
-
-        return arc_hubs
+            )
+        ]
 
     def extract_devices_from_structure(self):
-        """Extract devices from user structure if available."""
+        """Extract devices from every realestate in the user structure, if available."""
         if not self._user_structure:
             _LOGGER.debug("User structure not yet available, cannot extract devices")
             return None
 
         try:
-            # Create a devices structure from the user structure data
             devices = []
+            latest_cache_updated = 0
 
-            # Extract all machines (devices) from realestateMachines
-            if "realestateMachines" in self._user_structure:
-                for machine in self._user_structure["realestateMachines"]:
-                    # Skip cubic devices as they're handled separately
-                    if (
-                        machine.get("deviceType") == "cubicsecure"
-                        and machine.get("deviceRole") == "cubicsecure"
-                    ):
-                        continue
+            for realestate, machine in iter_realestate_machines(self._user_structure):
+                cache_updated = realestate.get("cacheUpdated", 0)
+                latest_cache_updated = max(latest_cache_updated, cache_updated)
 
-                    device_data = {
-                        "deviceTitle": machine,
-                        "mac": machine.get("identity"),
-                        "cacheUpdated": self._user_structure.get("cacheUpdated", 0),
-                    }
-
-                    # Add extra information for Arc devices
-                    if machine.get("deviceGroup") == "arc":
-                        device_data["deviceGroup"] = "arc"
-                        device_data["deviceType"] = machine.get("deviceType")
-                        device_data["deviceRole"] = machine.get("deviceRole")
-                        if "zone" in machine:
-                            device_data["zone"] = machine["zone"]
-
-                    devices.append(device_data)
+                device = _device_from_machine(machine, cache_updated)
+                if device is not None:
+                    devices.append(device)
 
             _LOGGER.debug("Extracted %d devices from user structure", len(devices))
-            # Return in the expected format
             return {
                 "devices": devices,
-                "cacheUpdated": self._user_structure.get("cacheUpdated", 0),
+                "cacheUpdated": latest_cache_updated,
             }
         except Exception as err:
             _LOGGER.warning("Error extracting devices from user structure: %s", err)
@@ -538,43 +555,16 @@ class LKSystemsManager:
                         _LOGGER.debug(
                             "API returned a list with %d items", len(api_response)
                         )
+
                         api_devices = []
-
-                        # Extract devices from each structure
-                        for structure in api_response:
-                            if (
-                                isinstance(structure, dict)
-                                and "realestateMachines" in structure
-                            ):
-                                for machine in structure.get("realestateMachines", []):
-                                    # Skip cubic devices as they're handled separately
-                                    if (
-                                        machine.get("deviceType") == "cubicsecure"
-                                        and machine.get("deviceRole") == "cubicsecure"
-                                    ):
-                                        continue
-
-                                    device_data = {
-                                        "deviceTitle": machine,
-                                        "mac": machine.get("identity"),
-                                        "cacheUpdated": structure.get(
-                                            "cacheUpdated", 0
-                                        ),
-                                    }
-
-                                    # Add extra information for Arc devices
-                                    if machine.get("deviceGroup") == "arc":
-                                        device_data["deviceGroup"] = "arc"
-                                        device_data["deviceType"] = machine.get(
-                                            "deviceType"
-                                        )
-                                        device_data["deviceRole"] = machine.get(
-                                            "deviceRole"
-                                        )
-                                        if "zone" in machine:
-                                            device_data["zone"] = machine["zone"]
-
-                                    api_devices.append(device_data)
+                        for realestate, machine in iter_realestate_machines(
+                            api_response
+                        ):
+                            device = _device_from_machine(
+                                machine, realestate.get("cacheUpdated", 0)
+                            )
+                            if device is not None:
+                                api_devices.append(device)
 
                         # Create a dictionary structure
                         api_data = {

@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from unittest.mock import patch
 
 import pytest
@@ -83,7 +84,7 @@ class FakeLKSystemsManager:
         self.refresh_token = None
         self.userid = None
 
-        self.user_structure: dict = {}
+        self.user_structure: list[dict] = []
         self.device_measurements: dict = {}
         self.device_configurations: dict = {}
         self.hub_devices: dict = {}
@@ -251,13 +252,87 @@ SENSOR_MAC = "AA:BB:CC:DD:EE:02"
 HUB_IDENTITY = "arc-hub-1"
 HUB_CHILD_MAC = "AA:BB:CC:DD:EE:03"
 
+# A second realestate's devices - distinct identities from the ones above,
+# used to model an account whose devices are split across two properties
+# rather than doubled up on one (see build_user_structure_with_two_realestates()).
+CUBIC_IDENTITY_3 = "cubic-secure-3"
+THERMOSTAT_MAC_2 = "AA:BB:CC:DD:EE:11"
+SENSOR_MAC_2 = "AA:BB:CC:DD:EE:12"
+HUB_IDENTITY_2 = "arc-hub-2"
+HUB_CHILD_MAC_2 = "AA:BB:CC:DD:EE:13"
+
+
+@dataclass(frozen=True)
+class _RealestateDevices:
+    """One realestate's device identities/zone names - shared by
+    build_user_structure() and build_second_realestate_structure() so the
+    device mix itself (one cubicsecure, one standalone thermostat, one
+    standalone plain sensor, one hub) isn't duplicated between them.
+    """
+
+    cubic_identity: str
+    cubic_zone: str
+    thermostat_mac: str
+    thermostat_zone: str
+    sensor_mac: str
+    sensor_zone: str
+    hub_identity: str
+    hub_name: str
+
+
+def _build_realestate_machines(devices: _RealestateDevices) -> list[dict]:
+    """The realestateMachines shape exercising every branch of the
+    coordinator's device loop: one cubicsecure, one standalone thermostat,
+    one standalone plain sensor, and one hub."""
+    return [
+        {
+            "identity": devices.cubic_identity,
+            "deviceGroup": "cubic",
+            "deviceType": "cubicsecure",
+            "deviceRole": "cubicsecure",
+            "zone": {
+                "zoneId": f"zone-{devices.cubic_identity}",
+                "zoneName": devices.cubic_zone,
+            },
+        },
+        {
+            "identity": devices.thermostat_mac,
+            "mac": devices.thermostat_mac,
+            "deviceGroup": "arc",
+            "deviceType": "arc-sense",
+            "deviceRole": "arc-tune",
+            "zone": {
+                "zoneId": f"zone-{devices.thermostat_mac}",
+                "zoneName": devices.thermostat_zone,
+            },
+        },
+        {
+            "identity": devices.sensor_mac,
+            "mac": devices.sensor_mac,
+            "deviceGroup": "arc",
+            "deviceType": "arc-sense",
+            "deviceRole": "arc-node",
+            "zone": {
+                "zoneId": f"zone-{devices.sensor_mac}",
+                "zoneName": devices.sensor_zone,
+            },
+        },
+        {
+            "identity": devices.hub_identity,
+            "mac": devices.hub_identity,
+            "deviceGroup": "arc",
+            "deviceType": "arc-hub",
+            "deviceRole": "arc-hub",
+            "name": devices.hub_name,
+        },
+    ]
+
 
 def build_user_structure() -> dict:
     """A realistic realestate structure: one cubicsecure, one standalone
     thermostat, one standalone plain sensor, and one hub with a child
     sensor - exercising every branch of the coordinator's device loop.
     """
-    now = int(time.time())
     return {
         "realestateId": "realestate-1",
         "name": "Test House",
@@ -266,40 +341,19 @@ def build_user_structure() -> dict:
         "zip": "12345",
         "country": "SE",
         "ownerId": "owner-1",
-        "cacheUpdated": now,
-        "realestateMachines": [
-            {
-                "identity": CUBIC_IDENTITY,
-                "deviceGroup": "cubic",
-                "deviceType": "cubicsecure",
-                "deviceRole": "cubicsecure",
-                "zone": {"zoneId": "zone-cubic", "zoneName": "Utility Room"},
-            },
-            {
-                "identity": THERMOSTAT_MAC,
-                "mac": THERMOSTAT_MAC,
-                "deviceGroup": "arc",
-                "deviceType": "arc-sense",
-                "deviceRole": "arc-tune",
-                "zone": {"zoneId": "zone-living", "zoneName": "Living Room"},
-            },
-            {
-                "identity": SENSOR_MAC,
-                "mac": SENSOR_MAC,
-                "deviceGroup": "arc",
-                "deviceType": "arc-sense",
-                "deviceRole": "arc-node",
-                "zone": {"zoneId": "zone-bed", "zoneName": "Bedroom"},
-            },
-            {
-                "identity": HUB_IDENTITY,
-                "mac": HUB_IDENTITY,
-                "deviceGroup": "arc",
-                "deviceType": "arc-hub",
-                "deviceRole": "arc-hub",
-                "name": "Test Hub",
-            },
-        ],
+        "cacheUpdated": int(time.time()),
+        "realestateMachines": _build_realestate_machines(
+            _RealestateDevices(
+                cubic_identity=CUBIC_IDENTITY,
+                cubic_zone="Utility Room",
+                thermostat_mac=THERMOSTAT_MAC,
+                thermostat_zone="Living Room",
+                sensor_mac=SENSOR_MAC,
+                sensor_zone="Bedroom",
+                hub_identity=HUB_IDENTITY,
+                hub_name="Test Hub",
+            )
+        ),
     }
 
 
@@ -321,6 +375,44 @@ def build_user_structure_with_two_cubic_devices() -> dict:
     return structure
 
 
+def build_second_realestate_structure() -> dict:
+    """A second realestate on the same account, with its own full mix of
+    devices (cubic, thermostat, sensor, hub) under distinct identities from
+    build_user_structure()'s - see build_user_structure_with_two_realestates().
+    """
+    return {
+        "realestateId": "realestate-2",
+        "name": "Second House",
+        "city": "Otherville",
+        "address": "2 Test Street",
+        "zip": "54321",
+        "country": "SE",
+        "ownerId": "owner-1",
+        "cacheUpdated": int(time.time()),
+        "realestateMachines": _build_realestate_machines(
+            _RealestateDevices(
+                cubic_identity=CUBIC_IDENTITY_3,
+                cubic_zone="Basement",
+                thermostat_mac=THERMOSTAT_MAC_2,
+                thermostat_zone="Second Living Room",
+                sensor_mac=SENSOR_MAC_2,
+                sensor_zone="Second Bedroom",
+                hub_identity=HUB_IDENTITY_2,
+                hub_name="Second Hub",
+            )
+        ),
+    }
+
+
+def build_user_structure_with_two_realestates() -> list[dict]:
+    """The get_user_structure() response for an account whose devices are
+    split across two realestates rather than doubled up on one - each
+    realestate carries its own full device mix so merging has more than a
+    single device per side to get wrong.
+    """
+    return [build_user_structure(), build_second_realestate_structure()]
+
+
 def build_measurements_by_device() -> dict:
     return {
         THERMOSTAT_MAC: {
@@ -336,6 +428,21 @@ def build_measurements_by_device() -> dict:
             "currentHumidity": 400,
             "currentBattery": 75,
             "currentRssi": -60,
+            "connectionState": "Connected",
+        },
+        THERMOSTAT_MAC_2: {
+            "currentTemperature": 175,  # 17.5°C
+            "desiredTemperature": 190,  # 19.0°C
+            "currentHumidity": 420,
+            "currentBattery": 80,
+            "currentRssi": -55,
+            "connectionState": "Connected",
+        },
+        SENSOR_MAC_2: {
+            "currentTemperature": 165,  # 16.5°C
+            "currentHumidity": 380,
+            "currentBattery": 70,
+            "currentRssi": -65,
             "connectionState": "Connected",
         },
     }
@@ -364,7 +471,29 @@ def build_hub_devices_by_hub() -> dict:
                     },
                 }
             ]
-        }
+        },
+        HUB_IDENTITY_2: {
+            "devices": [
+                {
+                    "mac": HUB_CHILD_MAC_2,
+                    "deviceTitle": {
+                        "identity": HUB_CHILD_MAC_2,
+                        "deviceGroup": "arc",
+                        "deviceType": "arc-sense",
+                        "deviceRole": "arc-node",
+                        "parentIdentity": HUB_IDENTITY_2,
+                        "zone": {"zoneId": "zone-attic", "zoneName": "Attic"},
+                    },
+                    "measurement": {
+                        "currentTemperature": 230,
+                        "currentHumidity": 480,
+                        "currentBattery": 55,
+                        "currentRssi": -75,
+                        "connectionState": "Connected",
+                    },
+                }
+            ]
+        },
     }
 
 
@@ -409,7 +538,7 @@ def build_live_config_without_mute_leak(**kwargs) -> dict:
 
 def configure_fake_manager_with_sample_data(manager: FakeLKSystemsManager) -> None:
     """Populate a FakeLKSystemsManager with the sample fixture data above."""
-    manager.user_structure = build_user_structure()
+    manager.user_structure = [build_user_structure()]
     manager.measurements_by_device = build_measurements_by_device()
     manager.hub_devices_by_hub = build_hub_devices_by_hub()
     manager.cubic_measurement_data = build_cubic_measurement()
@@ -421,7 +550,7 @@ def configure_fake_manager_with_two_cubic_devices(manager: FakeLKSystemsManager)
     with distinct measurement/configuration data so tests can tell them
     apart (see build_user_structure_with_two_cubic_devices()).
     """
-    manager.user_structure = build_user_structure_with_two_cubic_devices()
+    manager.user_structure = [build_user_structure_with_two_cubic_devices()]
     manager.measurements_by_device = build_measurements_by_device()
     manager.hub_devices_by_hub = build_hub_devices_by_hub()
     manager.cubic_measurements_by_device = {
@@ -431,6 +560,24 @@ def configure_fake_manager_with_two_cubic_devices(manager: FakeLKSystemsManager)
     manager.cubic_configurations_by_device = {
         CUBIC_IDENTITY: build_cubic_configuration(valve_state="open"),
         CUBIC_IDENTITY_2: build_cubic_configuration(valve_state="closed"),
+    }
+
+
+def configure_fake_manager_with_two_realestates(manager: FakeLKSystemsManager) -> None:
+    """Populate a FakeLKSystemsManager with two realestates on one account,
+    each with its own full set of devices (see
+    build_user_structure_with_two_realestates()).
+    """
+    manager.user_structure = build_user_structure_with_two_realestates()
+    manager.measurements_by_device = build_measurements_by_device()
+    manager.hub_devices_by_hub = build_hub_devices_by_hub()
+    manager.cubic_measurements_by_device = {
+        CUBIC_IDENTITY: build_cubic_measurement(volume_total=45000),
+        CUBIC_IDENTITY_3: build_cubic_measurement(volume_total=77000),
+    }
+    manager.cubic_configurations_by_device = {
+        CUBIC_IDENTITY: build_cubic_configuration(valve_state="open"),
+        CUBIC_IDENTITY_3: build_cubic_configuration(valve_state="closed"),
     }
 
 
@@ -530,6 +677,16 @@ def fake_manager_with_two_cubic_devices() -> FakeLKSystemsManager:
     """
     manager = FakeLKSystemsManager()
     configure_fake_manager_with_two_cubic_devices(manager)
+    return manager
+
+
+@pytest.fixture
+def fake_manager_with_two_realestates() -> FakeLKSystemsManager:
+    """A FakeLKSystemsManager pre-populated with two realestates on one
+    account, each with its own full set of devices.
+    """
+    manager = FakeLKSystemsManager()
+    configure_fake_manager_with_two_realestates(manager)
     return manager
 
 
