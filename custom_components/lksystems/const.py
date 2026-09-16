@@ -1,13 +1,15 @@
 """Constants for the LK Systems integration."""
 
+from dataclasses import dataclass
 from typing import Final
 
+from homeassistant.components.number import NumberEntityDescription
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import EntityCategory
+from homeassistant.const import EntityCategory, UnitOfPressure, UnitOfTime
 
 DOMAIN = "lksystems"
 INTEGRATION_NAME = "LK Systems"
@@ -264,5 +266,109 @@ LK_CUBICSECURE_CONFIG_SENSORS: dict[str, SensorEntityDescription] = {
         state_class=None,
         translation_key="hardware_version_sensor",
         entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+}
+
+
+@dataclass(frozen=True)
+class LKThresholdNumberDescription(NumberEntityDescription, frozen_or_thawed=True):
+    """Describes one leak-detection threshold as a writable number entity.
+
+    The real API's thresholds object is nested (category -> field) unlike
+    the flat dicts SensorEntityDescription.key already handles, so this
+    carries its own category/fields instead of relying on key alone.
+    `fields` holds more than one name when a single displayed control
+    writes the same value to multiple API fields at once - confirmed
+    against a real account that the app's one "delay" slider per leak
+    category does exactly this (closeDelay and notificationDelay always
+    equal there).
+
+    `api_unit_of_measurement` is the unit the API itself uses (always
+    seconds for delay/duration fields) when it differs from
+    `native_unit_of_measurement` (what's displayed) - number.py converts
+    between the two via DurationConverter at its own boundary, the same
+    way it already does for the sibling Pause Duration entity. None (the
+    default) means the API and displayed units are the same field, no
+    conversion needed.
+    """
+
+    category: str = ""
+    fields: tuple[str, ...] = ()
+    api_unit_of_measurement: str | None = None
+
+
+# Field scope and min/max/step below come from the LK app's own "Advanced
+# alarm settings" screen (checked by dragging every slider to both
+# extremes on a real account), not just the raw API schema - the app
+# never exposes closeDelay/notificationDelay as separate controls (one
+# combined "delay" per leak category instead, confirmed writing the same
+# value to both), and doesn't expose those two fields for pressure at all.
+LK_CUBICSECURE_THRESHOLD_NUMBERS: dict[str, LKThresholdNumberDescription] = {
+    "large_leak_threshold": LKThresholdNumberDescription(
+        key="large_leak_threshold",
+        name="Large Leak Threshold",
+        category="leakLarge",
+        fields=("threshold",),
+        native_min_value=500,
+        native_max_value=2500,
+        native_step=50,
+        native_unit_of_measurement="L/h",
+        icon="mdi:water-alert",
+    ),
+    "large_leak_delay": LKThresholdNumberDescription(
+        key="large_leak_delay",
+        name="Large Leak Delay",
+        category="leakLarge",
+        fields=("closeDelay", "notificationDelay"),
+        native_min_value=30,
+        native_max_value=120,
+        native_step=5,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        icon="mdi:timer-alert-outline",
+    ),
+    "medium_leak_threshold": LKThresholdNumberDescription(
+        key="medium_leak_threshold",
+        name="Medium Leak Threshold",
+        category="leakMedium",
+        fields=("threshold",),
+        native_min_value=2,
+        native_max_value=30,
+        native_step=1,
+        native_unit_of_measurement="L/h",
+        icon="mdi:water-alert-outline",
+    ),
+    "medium_leak_delay": LKThresholdNumberDescription(
+        key="medium_leak_delay",
+        name="Medium Leak Delay",
+        category="leakMedium",
+        fields=("closeDelay", "notificationDelay"),
+        native_min_value=5,
+        native_max_value=120,
+        native_step=1,
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        icon="mdi:timer-alert-outline",
+        api_unit_of_measurement=UnitOfTime.SECONDS,
+    ),
+    "pressure_sensitivity": LKThresholdNumberDescription(
+        key="pressure_sensitivity",
+        name="Pressure Test Sensitivity",
+        category="pressure",
+        fields=("sensitivity",),
+        native_min_value=0.2,
+        native_max_value=0.8,
+        native_step=0.1,
+        native_unit_of_measurement=UnitOfPressure.BAR,
+        icon="mdi:gauge",
+    ),
+    "pressure_duration": LKThresholdNumberDescription(
+        key="pressure_duration",
+        name="Pressure Test Duration",
+        category="pressure",
+        fields=("duration",),
+        native_min_value=45,
+        native_max_value=150,
+        native_step=5,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        icon="mdi:timer-sand",
     ),
 }

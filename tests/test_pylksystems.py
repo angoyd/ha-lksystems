@@ -417,6 +417,101 @@ class TestCubicSecureMeasurement:
         assert manager.cubic_secure_measurement is None
 
 
+class TestCubicSecureSetThresholds:
+    async def test_posts_to_the_real_plural_endpoint(self, manager):
+        """The real API endpoint is /thresholds (plural) - confirmed
+        against the actual OpenAPI spec and, live, with a real device
+        (a singular /threshold URL 404s every time)."""
+        thresholds = {
+            "pressure": {
+                "sensitivity": 0.3,
+                "duration": 45,
+                "closeDelay": 255600,
+                "notificationDelay": 169200,
+            },
+            "leakMedium": {
+                "threshold": 10.0,
+                "closeDelay": 1800,
+                "notificationDelay": 1800,
+            },
+            "leakLarge": {
+                "threshold": 1500.0,
+                "closeDelay": 90,
+                "notificationDelay": 90,
+            },
+        }
+
+        with aioresponses() as m:
+            m.post(
+                BASE_URL + "control/cubic/secure/cubic-1/thresholds",
+                payload=thresholds,
+                status=200,
+            )
+            async with manager:
+                result = await manager.cubic_secure_set_thresholds(
+                    "cubic-1", thresholds
+                )
+
+        assert result is True
+
+    async def test_error_status_returns_false(self, manager):
+        with aioresponses() as m:
+            m.post(
+                BASE_URL + "control/cubic/secure/cubic-1/thresholds",
+                status=404,
+            )
+            async with manager:
+                result = await manager.cubic_secure_set_thresholds("cubic-1", {})
+
+        assert result is False
+
+
+class TestThresholdsWithOverrides:
+    """cubic_secure_set_thresholds() only accepts the full object at
+    once - this is the one place that carry-forward logic lives, shared
+    by both the leak-detection threshold number entities and the
+    set_thresholds service.
+    """
+
+    def _sample_thresholds(self):
+        return {
+            "pressure": {"sensitivity": 0.3, "duration": 45},
+            "leakMedium": {"threshold": 10.0, "closeDelay": 1800},
+            "leakLarge": {"threshold": 1500.0, "closeDelay": 90},
+        }
+
+    def test_overrides_only_the_given_category_and_fields(self):
+        current = self._sample_thresholds()
+
+        updated = pylksystems.thresholds_with_overrides(
+            current, "leakLarge", {"threshold": 2000.0}
+        )
+
+        assert updated["leakLarge"] == {"threshold": 2000.0, "closeDelay": 90}
+        assert updated["pressure"] == current["pressure"]
+        assert updated["leakMedium"] == current["leakMedium"]
+
+    def test_can_override_multiple_fields_in_one_category(self):
+        current = self._sample_thresholds()
+
+        updated = pylksystems.thresholds_with_overrides(
+            current, "leakLarge", {"closeDelay": 60, "notificationDelay": 60}
+        )
+
+        assert updated["leakLarge"] == {
+            "threshold": 1500.0,
+            "closeDelay": 60,
+            "notificationDelay": 60,
+        }
+
+    def test_does_not_mutate_the_input(self):
+        current = self._sample_thresholds()
+
+        pylksystems.thresholds_with_overrides(current, "leakLarge", {"threshold": 2000.0})
+
+        assert current["leakLarge"]["threshold"] == 1500.0
+
+
 class TestSetDeviceTemperature:
     async def test_success_converts_and_sends_tenths_of_degree(self, manager):
         with aioresponses() as m:

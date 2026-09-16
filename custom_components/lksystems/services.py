@@ -1,4 +1,4 @@
-from .pylksystems import LKSystemsManager, LKThresholds, LKPressureThresholds
+from .pylksystems import LKSystemsManager, LKThresholds, thresholds_with_overrides
 from contextlib import asynccontextmanager
 import logging
 
@@ -47,6 +47,20 @@ async def _service_write_session(entry: ConfigEntry):
             _LOGGER.error("Failed to login, abort update")
             raise _ServiceLoginFailed("Failed to login")
         yield lk_inst
+
+
+def _overrides_from_call_data(
+    call_data: dict, field_keys: dict[str, str]
+) -> dict:
+    """Extract just the fields a set_thresholds call actually specified -
+    field_keys maps each API field name to its service call-data key.
+    Passed to thresholds_with_overrides(), which carries every other
+    current value forward unchanged."""
+    return {
+        field: call_data[call_key]
+        for field, call_key in field_keys.items()
+        if call_key in call_data
+    }
 
 
 def _get_serial_number(hass: HomeAssistant, device_id: str) -> str | None:
@@ -162,6 +176,50 @@ async def open_valve_for_serial(
     )
 
 
+async def set_thresholds_for_serial(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    serial_number: str,
+    thresholds: LKThresholds,
+) -> bool:
+    """Log in, write one device's full thresholds object, and confirm the
+    write by refreshing configuration with the same session.
+
+    Takes the complete thresholds object to send - the API only accepts a
+    full-object write, not a per-field patch (see
+    cubic_secure_set_thresholds's own docstring) - so a caller changing
+    just one field must build it via pylksystems.thresholds_with_overrides()
+    from the device's current thresholds (e.g.
+    cubic_secure_configuration(coordinator, serial_number)), not pass a
+    partial object here - every field not included would revert to
+    whatever's passed.
+
+    Uses the cached confirmation read (force_update=False), not the
+    bypass one valve writes use: thresholds are server-side-tracked like
+    muteLeak, not a physical device property, so the cache already
+    reflects a write immediately - see
+    refresh_cubic_secure_configuration()'s own docstring.
+    """
+    _LOGGER.info("Setting thresholds for %s", serial_number)
+    try:
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+
+        async with _service_write_session(entry) as lk_inst:
+            success = await lk_inst.cubic_secure_set_thresholds(
+                serial_number, thresholds
+            )
+            if success:
+                await coordinator.refresh_cubic_secure_configuration_with_client(
+                    lk_inst, serial_number
+                )
+            return success
+    except _ServiceLoginFailed:
+        return False
+    except Exception as e:
+        _LOGGER.error("Error setting thresholds: %s", e)
+        return False
+
+
 async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
     @callback
     async def pause_leak_detection(call: ServiceCall) -> None:
@@ -209,51 +267,67 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     @callback
     async def set_thresholds(call: ServiceCall) -> None:
-        """Handle the service action call."""
+        """Handle the service action call.
+
+        A field not explicitly given falls back to the device's current
+        value, not a hardcoded literal - the API only accepts the whole
+        thresholds object at once (see cubic_secure_set_thresholds's own
+        docstring), so a literal default here would silently reset every
+        omitted field instead of leaving it alone.
+        """
         device_id = call.data.get("device_id")
         sn = _get_serial_number(hass, device_id)
         if not sn:
             return
-        pressure_sensitivity = call.data.get("pressure_sensitivity", 0.3)
-        pressure_test_duration = call.data.get("pressure_test_duration", 45)
-        pressure_close_delay = call.data.get("pressure_close_delay", 255600)
-        pressure_notification_delay = call.data.get(
-            "pressure_notification_delay", 169200
-        )
-        medium_leak_threshold = call.data.get("medium_leak_threshold", 5.0)
-        medium_leak_close_delay = call.data.get("medium_leak_close_delay", 2700)
-        medium_leak_notification_delay = call.data.get(
-            "medium_leak_notification_delay", 2700
-        )
-        large_leak_threshold = call.data.get("large_leak_threshold", 1500.0)
-        large_leak_close_delay = call.data.get("large_leak_close_delay", 90)
-        large_leak_notification_delay = call.data.get(
-            "large_leak_notification_delay", 90
-        )
-        thresholds = LKThresholds(
-            pressure=LKPressureThresholds(
-                sensitivity=pressure_sensitivity,
-                duration=pressure_test_duration,
-                closeDelay=pressure_close_delay,
-                notificationDelay=pressure_notification_delay,
+
+        # Deferred to avoid a circular import: __init__.py imports
+        # async_setup_services from this module at module load time, so a
+        # top-level "from . import cubic_secure_configuration" here would
+        # try to read it off __init__.py before that module has finished
+        # executing.
+        from . import cubic_secure_configuration
+
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+        current = cubic_secure_configuration(coordinator, sn).get("thresholds") or {}
+
+        thresholds = thresholds_with_overrides(
+            current,
+            "pressure",
+            _overrides_from_call_data(
+                call.data,
+                {
+                    "sensitivity": "pressure_sensitivity",
+                    "duration": "pressure_test_duration",
+                    "closeDelay": "pressure_close_delay",
+                    "notificationDelay": "pressure_notification_delay",
+                },
             ),
-            leakMedium={
-                "threshold": medium_leak_threshold,
-                "closeDelay": medium_leak_close_delay,
-                "notificationDelay": medium_leak_notification_delay,
-            },
-            leakLarge={
-                "threshold": large_leak_threshold,
-                "closeDelay": large_leak_close_delay,
-                "notificationDelay": large_leak_notification_delay,
-            },
         )
-        _LOGGER.info(f"Setting thresholds {sn} to {thresholds}")
-        try:
-            async with _service_write_session(entry) as lk_inst:
-                await lk_inst.cubic_secure_set_thresholds(sn, thresholds)
-        except Exception as e:
-            _LOGGER.error("Error setting thresholds: %s", e)
+        thresholds = thresholds_with_overrides(
+            thresholds,
+            "leakMedium",
+            _overrides_from_call_data(
+                call.data,
+                {
+                    "threshold": "medium_leak_threshold",
+                    "closeDelay": "medium_leak_close_delay",
+                    "notificationDelay": "medium_leak_notification_delay",
+                },
+            ),
+        )
+        thresholds = thresholds_with_overrides(
+            thresholds,
+            "leakLarge",
+            _overrides_from_call_data(
+                call.data,
+                {
+                    "threshold": "large_leak_threshold",
+                    "closeDelay": "large_leak_close_delay",
+                    "notificationDelay": "large_leak_notification_delay",
+                },
+            ),
+        )
+        await set_thresholds_for_serial(hass, entry, sn, thresholds)
 
     # Register our service with Home Assistant.
     hass.services.async_register(DOMAIN, "pause_leak_detection", pause_leak_detection)

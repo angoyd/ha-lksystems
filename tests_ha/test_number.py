@@ -26,8 +26,10 @@ from custom_components.lksystems.const import (
 from .conftest import (
     CUBIC_IDENTITY,
     CUBIC_IDENTITY_2,
+    build_thresholds,
     entity_id,
     pause_leak_detection_duration_unique_id as _number_unique_id,
+    patch_all_managers,
     setup_entry,
 )
 
@@ -171,3 +173,121 @@ async def test_restores_seconds_data_from_before_the_unit_changed_to_minutes(
     coordinator = hass.data[DOMAIN][entry.entry_id]
     assert coordinator.pause_leak_detection_seconds[CUBIC_IDENTITY] == 300
     assert float(hass.states.get(number_entity_id).state) == 5
+
+
+class TestLeakDetectionThresholdNumbers:
+    """The six leak-detection threshold entities - see
+    LKThresholdNumberDescription's own docstring for the field
+    scope/units, chosen to match what the LK app itself exposes.
+    """
+
+    async def test_reads_current_values_from_the_coordinator(
+        self, hass, fake_manager
+    ):
+        await setup_entry(hass, fake_manager)
+
+        assert (
+            float(
+                hass.states.get(
+                    entity_id(hass, "number", f"LkUid_large_leak_threshold_{CUBIC_IDENTITY}")
+                ).state
+            )
+            == 1500.0
+        )
+        assert (
+            float(
+                hass.states.get(
+                    entity_id(hass, "number", f"LkUid_medium_leak_threshold_{CUBIC_IDENTITY}")
+                ).state
+            )
+            == 10.0
+        )
+        assert (
+            float(
+                hass.states.get(
+                    entity_id(hass, "number", f"LkUid_pressure_sensitivity_{CUBIC_IDENTITY}")
+                ).state
+            )
+            == 0.3
+        )
+
+    async def test_medium_leak_delay_is_converted_to_minutes(self, hass, fake_manager):
+        """build_thresholds()'s medium-leak delay is 1800s (30 min) - the
+        one field this platform displays in minutes rather than the raw
+        API seconds, the same seconds-to-minutes boundary Pause Duration
+        already uses."""
+        await setup_entry(hass, fake_manager)
+
+        state = hass.states.get(
+            entity_id(hass, "number", f"LkUid_medium_leak_delay_{CUBIC_IDENTITY}")
+        )
+
+        assert float(state.state) == 30
+        assert state.attributes["unit_of_measurement"] == "min"
+
+    async def test_belongs_to_the_cubic_secure_device(self, hass, fake_manager):
+        await setup_entry(hass, fake_manager)
+
+        device = dr.async_get(hass).async_get_device(
+            identifiers={(DOMAIN, CUBIC_IDENTITY)}
+        )
+        entry = er.async_get(hass).async_get(
+            entity_id(hass, "number", f"LkUid_large_leak_threshold_{CUBIC_IDENTITY}")
+        )
+
+        assert entry.device_id == device.id
+
+    async def test_setting_a_value_carries_over_every_other_current_value(
+        self, hass, fake_manager
+    ):
+        """The write is a full-object POST, not a per-field patch -
+        changing one control must not silently reset any other currently
+        configured value. This is the exact bug the old set_thresholds
+        service had (see its own test coverage in test_services.py)."""
+        await setup_entry(hass, fake_manager)
+        large_leak_threshold_id = entity_id(
+            hass, "number", f"LkUid_large_leak_threshold_{CUBIC_IDENTITY}"
+        )
+
+        with patch_all_managers(fake_manager):
+            await hass.services.async_call(
+                "number",
+                "set_value",
+                {"entity_id": large_leak_threshold_id, "value": 2000},
+                blocking=True,
+            )
+
+        threshold_calls = [
+            c for c in fake_manager.calls if c[0] == "cubic_secure_set_thresholds"
+        ]
+        assert len(threshold_calls) == 1
+        sent = threshold_calls[0][2]
+        assert sent == build_thresholds(large_leak_threshold=2000.0)
+
+    async def test_delay_entity_writes_both_close_and_notification_delay(
+        self, hass, fake_manager
+    ):
+        """One displayed "delay" control maps to two API fields at once -
+        confirmed against a real account that the app's single delay
+        slider per leak category writes the same value to both."""
+        await setup_entry(hass, fake_manager)
+        large_leak_delay_id = entity_id(
+            hass, "number", f"LkUid_large_leak_delay_{CUBIC_IDENTITY}"
+        )
+
+        with patch_all_managers(fake_manager):
+            await hass.services.async_call(
+                "number",
+                "set_value",
+                {"entity_id": large_leak_delay_id, "value": 60},
+                blocking=True,
+            )
+
+        sent = next(
+            c[2] for c in fake_manager.calls if c[0] == "cubic_secure_set_thresholds"
+        )
+        assert sent["leakLarge"]["closeDelay"] == 60
+        assert sent["leakLarge"]["notificationDelay"] == 60
+        assert sent == build_thresholds(
+            large_leak_close_delay=60, large_leak_notification_delay=60
+        )

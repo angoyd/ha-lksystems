@@ -173,6 +173,23 @@ class LKThresholds(TypedDict):
     leakLarge: LKLeakThresholds
 
 
+def thresholds_with_overrides(
+    current: LKThresholds | dict, category: str, overrides: dict
+) -> dict:
+    """Return a full thresholds payload with one category's fields
+    overridden, carrying every other current value over unchanged.
+
+    cubic_secure_set_thresholds() only accepts the complete object at
+    once - there's no per-field patch endpoint - so every caller building
+    a change from just one or two fields (a number entity, the
+    set_thresholds service) needs this same carry-forward, not a fresh
+    copy of it. Never mutates `current` itself.
+    """
+    updated = {key: dict(value) for key, value in current.items()}
+    updated.setdefault(category, {}).update(overrides)
+    return updated
+
+
 class LKSystemsManager:
     """LKSystems manager."""
 
@@ -1189,8 +1206,8 @@ class LKSystemsManager:
     async def cubic_secure_set_thresholds(
         self, cubic_identity: str, threshold: LKThresholds
     ):
-        """Set threshold"""
-        endpoint = f"control/cubic/secure/{cubic_identity}/threshold"
+        """Set leak-detection thresholds"""
+        endpoint = f"control/cubic/secure/{cubic_identity}/thresholds"
         payload = threshold
         success, res = await self._post(endpoint, payload)
         if success:
