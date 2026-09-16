@@ -11,6 +11,7 @@ seconds, matching the API's own "pause for N seconds" contract.
 
 from __future__ import annotations
 
+from homeassistant.const import EntityCategory
 from homeassistant.core import State
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -236,6 +237,22 @@ class TestLeakDetectionThresholdNumbers:
         )
 
         assert entry.device_id == device.id
+
+    async def test_is_a_configuration_entity(self, hass, fake_manager):
+        """These are set-once tuning values, not something you operate
+        moment-to-moment - entity_category=CONFIG puts them in the device
+        page's separate Configuration section instead of mixed in with
+        Controls (the valve, Pause Duration/buttons), matching how the LK
+        app itself keeps "Advanced alarm settings" on its own screen,
+        apart from the main dashboard.
+        """
+        await setup_entry(hass, fake_manager)
+
+        entry = er.async_get(hass).async_get(
+            entity_id(hass, "number", f"LkUid_large_leak_threshold_{CUBIC_IDENTITY}")
+        )
+
+        assert entry.entity_category is EntityCategory.CONFIG
 
     async def test_setting_a_value_carries_over_every_other_current_value(
         self, hass, fake_manager

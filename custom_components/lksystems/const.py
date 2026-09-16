@@ -290,11 +290,19 @@ class LKThresholdNumberDescription(NumberEntityDescription, frozen_or_thawed=Tru
     way it already does for the sibling Pause Duration entity. None (the
     default) means the API and displayed units are the same field, no
     conversion needed.
+
+    entity_category defaults to CONFIG - every threshold is a set-once
+    tuning value, not something operated moment-to-moment, so it belongs
+    in the device page's Configuration section rather than mixed in with
+    Controls (the valve, Pause Duration/buttons) - matching how the LK
+    app itself keeps "Advanced alarm settings" on its own screen, apart
+    from the main dashboard.
     """
 
     category: str = ""
     fields: tuple[str, ...] = ()
     api_unit_of_measurement: str | None = None
+    entity_category: EntityCategory | None = EntityCategory.CONFIG
 
 
 # Field scope and min/max/step below come from the LK app's own "Advanced
