@@ -89,6 +89,39 @@ looked obvious from the field name and wasn't. Keep this up:
   testing should say so; one that's inferred/still a guess should say that
   too, not read as more certain than it is.
 
+## GitHub issue workflow
+
+Before filing a new issue, search the repo's existing open (and recently
+closed) issues for the same problem first - `gh issue list` / `gh search
+issues` against `angoyd/ha-lksystems`, not just a guess from memory. Filing a
+duplicate splits discussion and tracking across two threads for no benefit;
+if one is found, add to/comment on the existing issue instead of opening a
+new one.
+
+When told to start working on/implementing a specific issue, assign yourself
+to it (`gh issue edit <n> --add-assignee <username>`) before starting -
+that's the signal to anyone else looking at the tracker that it's actively
+being worked, not just open and unclaimed.
+
+### Labels
+
+Beyond GitHub's own defaults (`bug`, `enhancement`, `question`, `duplicate`,
+etc.), this repo has a few custom labels for states the defaults don't
+cover:
+
+- `tech-debt` - code cleanliness/duplication/dead-code work with no
+  user-facing behavior change (as opposed to `enhancement`, a new feature or
+  user-facing improvement).
+- `waiting-for-response` - blocked on a *specific* person providing a
+  *specific* piece of information (a data sample, a confirmation a fix
+  works) - we know exactly what's needed and from whom, and can act as soon
+  as it arrives.
+- `needs-more-evidence` - not yet well-understood enough to define what
+  "fixing" it would even look like - gathering reports/data points to find a
+  pattern, with no single person or answer that unblocks it. Distinct from
+  `waiting-for-response`: there, one specific reply moves things forward;
+  here, the next step itself isn't known yet.
+
 ## Before opening a pull request
 
 - Run `/simplify` (or an equivalent focused review) over the diff.
