@@ -69,19 +69,19 @@ async def test_user_step_creates_entry(hass):
     assert result["data"] == USER_INPUT
 
 
-async def test_user_step_duplicate_username_aborts(hass):
-    """A second entry for the same username is rejected."""
+async def test_second_entry_aborts_as_single_instance(hass):
+    """One config entry already manages every realestate/device on the
+    account - a second entry isn't a supported use case, regardless of
+    which credentials it's for.
+    """
     MockConfigEntry(domain=DOMAIN, data=USER_INPUT).add_to_hass(hass)
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
     )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], USER_INPUT
-    )
 
     assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "already_configured"
+    assert result["reason"] == "single_instance_allowed"
 
 
 async def test_options_flow_updates_interval(hass):
