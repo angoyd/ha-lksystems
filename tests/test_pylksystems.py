@@ -7,6 +7,7 @@ merge/dedupe, error handling) without ever hitting the real LK Systems API.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock, patch
 
@@ -555,6 +556,22 @@ class TestSetDeviceTemperature:
         assert result is False
         assert "AA:BB:CC" not in manager.device_measurements
 
+    async def test_timeout_during_post_is_handled(self, manager):
+        with aioresponses() as m:
+            m.get(
+                BASE_URL + "service/arc/sense/AA:BB:CC/measurement/true",
+                payload={"currentTemperature": 210, "desiredTemperature": 200},
+                status=200,
+            )
+            m.post(
+                BASE_URL + "service/arc/sense/AA:BB:CC/measurement/true",
+                exception=asyncio.TimeoutError(),
+            )
+            async with manager:
+                result = await manager.set_device_temperature("AA:BB:CC", 21.5)
+
+        assert result is False
+
 
 class TestSensitiveDataNotLogged:
     """Regression tests: request failures and debug logs must never leak
@@ -605,6 +622,71 @@ class TestClientSessionTimeout:
 
         assert timeout.total is not None
         assert timeout.total <= 30
+
+
+class TestUnguardedRequestTimeout:
+    """A slow/unresponsive LK API response (aiohttp's ClientTimeout firing)
+    must be handled the same way any other request failure is, not escape
+    uncaught up to the coordinator - which logs it as a bare, endpoint-less
+    "Timeout fetching lksystems data" and fails the whole update.
+
+    _get()/_post() already guarantee this (see TestClientSessionTimeout's
+    sibling coverage via _request_with_retry's own timeout handling), but
+    these methods build their own request directly instead of going
+    through that shared, hardened path.
+    """
+
+    @pytest.mark.parametrize(
+        ("http_method", "endpoint", "call"),
+        [
+            ("post", "auth/auth/login", lambda m: m.login()),
+            (
+                "get",
+                "service/users/user/user-123/structure/false",
+                lambda m: m.get_devices(),
+            ),
+            (
+                "get",
+                "service/arc/hub/hub-1/structure/false",
+                lambda m: m.get_hub_devices("hub-1"),
+            ),
+            (
+                "get",
+                "service/arc/sense/AA:BB:CC/measurement/false",
+                lambda m: m.get_arc_sense_measurement("AA:BB:CC"),
+            ),
+            (
+                "get",
+                "service/arc/sense/AA:BB:CC/configuration/false",
+                lambda m: m.get_arc_sense_configuration("AA:BB:CC"),
+            ),
+            (
+                "get",
+                "service/arc/sense/AA:BB:CC/measurement/false",
+                lambda m: m.get_device_measurement("AA:BB:CC"),
+            ),
+            (
+                "get",
+                "service/arc/sense/AA:BB:CC/configuration/false",
+                lambda m: m.get_device_configuration("AA:BB:CC"),
+            ),
+            (
+                "get",
+                "service/devices/device/AA:BB:CC/title/false",
+                lambda m: m.get_device_title("AA:BB:CC"),
+            ),
+        ],
+    )
+    async def test_timeout_is_handled_not_raised(
+        self, manager, http_method, endpoint, call
+    ):
+        manager.userid = "user-123"
+        with aioresponses() as m:
+            getattr(m, http_method)(BASE_URL + endpoint, exception=asyncio.TimeoutError())
+            async with manager:
+                result = await call(manager)
+
+        assert result is False
 
 
 @pytest.mark.usefixtures("mock_sleep")

@@ -353,7 +353,7 @@ class LKSystemsManager:
                     await self._sleep_before_retry(endpoint, delay, retry_attempt)
                     retry_attempt += 1
 
-                except (ClientResponseError, ClientError) as error:
+                except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
                     return (
                         await self.handle_client_error(endpoint, headers, error)
                     ), None
@@ -436,7 +436,7 @@ class LKSystemsManager:
                 _LOGGER.error("Unexpected HTTP status code: %s", response.status)
                 return False
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
     async def get_cubic_secure_measurement(
@@ -641,7 +641,7 @@ class LKSystemsManager:
                     and len(self._devices.get("devices", [])) > 0
                 )
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             # Handle the error but don't immediately return False
             await self.handle_client_error(endpoint, headers, error)
             # Return True if we already have devices from structure
@@ -688,7 +688,7 @@ class LKSystemsManager:
                 )
                 return False
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
     @property
@@ -737,7 +737,7 @@ class LKSystemsManager:
                 )
                 return False
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
     async def get_arc_sense_configuration(self, arc_sense_mac: str, force_update=False):
@@ -781,7 +781,7 @@ class LKSystemsManager:
                 )
                 return False
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
     async def get_device_measurement(self, device_identity: str, force_update=False):
@@ -827,7 +827,7 @@ class LKSystemsManager:
                 )
                 return False
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
     async def get_device_configuration(self, device_identity: str, force_update=False):
@@ -869,7 +869,7 @@ class LKSystemsManager:
                 )
                 return False
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
     async def get_device_title(self, device_identity: str, force_update=False):
@@ -908,7 +908,7 @@ class LKSystemsManager:
                 )
                 return False
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
     async def set_device_temperature(self, device_identity: str, temperature: float):
@@ -994,7 +994,7 @@ class LKSystemsManager:
                 )
                 return False
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
     async def set_thermostat_temperature(self, device_id, temperature):
