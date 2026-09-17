@@ -81,6 +81,10 @@ Requirements on the target instance: SSH access (e.g. the [Terminal & SSH add-on
 
 After syncing, reload the integration (**Settings → Devices & Services → LK Systems → ⋮ → Reload**), or restart HA on a first install.
 
+Copy `.env.example` to `.env` and fill in `HA_SSH_HOST`/`HA_SSH_USER` (`.env` is gitignored) to run `./deploy.sh` with no arguments instead of typing them every time.
+
+`tail_logs.py` polls Home Assistant's WebSocket API (`system_log/list`) and prints new lines, filtered to this integration by default - useful for watching a live test (e.g. a rate-limit check) as it happens. It uses the WebSocket API rather than tailing a log file over SSH (where - or whether - Home Assistant writes a log file to disk varies by install type and by each instance's own logger config) and rather than the REST API's `GET /api/error_log` (still listed in Home Assistant's developer docs, but removed from Core - confirmed returning a 404 against a real instance). Needs `HA_LONG_LIVED_TOKEN` in `.env` (see `.env.example` for how to generate a token); `HA_URL` there is optional, defaulting to `https://$HA_SSH_HOST:8123`. Uses `aiohttp` (already a project dependency) - run it with the test venv's Python: `.venv-test/bin/python3 tail_logs.py`.
+
 ### Using the Home Assistant MCP server for live testing
 
 If your test instance has the built-in [**Model Context Protocol Server**](https://www.home-assistant.io/integrations/mcp_server/) integration enabled, an AI coding assistant (like Claude Code) can query live entity states and call services directly against it — useful for verifying a change actually behaves correctly in HA, not just that the unit tests pass.
