@@ -83,6 +83,7 @@ class FakeLKSystemsManager:
         self.jwt_token = None
         self.refresh_token = None
         self.userid = None
+        self.last_rate_limit_retry_after: float | None = None
 
         self.user_structure: list[dict] = []
         self.device_measurements: dict = {}

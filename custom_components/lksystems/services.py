@@ -1,6 +1,7 @@
 from .pylksystems import LKSystemsManager, LKThresholds, thresholds_with_overrides
 from contextlib import asynccontextmanager
 import logging
+from typing import NamedTuple
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
@@ -176,12 +177,21 @@ async def open_valve_for_serial(
     )
 
 
+class ThresholdWriteResult(NamedTuple):
+    """Outcome of a threshold write - whether it succeeded, and if not,
+    whether it's specifically known to be rate-limited (with the delay
+    the API reported) as opposed to some other kind of failure."""
+
+    success: bool
+    retry_after: float | None = None
+
+
 async def set_thresholds_for_serial(
     hass: HomeAssistant,
     entry: ConfigEntry,
     serial_number: str,
     thresholds: LKThresholds,
-) -> bool:
+) -> ThresholdWriteResult:
     """Log in, write one device's full thresholds object, and confirm the
     write by refreshing configuration with the same session.
 
@@ -212,12 +222,13 @@ async def set_thresholds_for_serial(
                 await coordinator.refresh_cubic_secure_configuration_with_client(
                     lk_inst, serial_number
                 )
-            return success
+                return ThresholdWriteResult(True)
+            return ThresholdWriteResult(False, lk_inst.last_rate_limit_retry_after)
     except _ServiceLoginFailed:
-        return False
+        return ThresholdWriteResult(False)
     except Exception as e:
         _LOGGER.error("Error setting thresholds: %s", e)
-        return False
+        return ThresholdWriteResult(False)
 
 
 async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
