@@ -8,6 +8,9 @@ see PREVENT_VALVE_CLOSING_SENTINEL's own comment in const.py for why.
 
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import patch
+
 from homeassistant.const import EntityCategory
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -17,6 +20,7 @@ from custom_components.lksystems.const import (
     PREVENT_VALVE_CLOSING_SENTINEL,
     PRESSURE_CLOSE_DELAY_DEFAULT,
 )
+from custom_components.lksystems.threshold_writes import LKThresholdWriteCoordinator
 
 from .conftest import (
     CUBIC_IDENTITY,
@@ -25,6 +29,10 @@ from .conftest import (
     entity_id,
     patch_all_managers,
     setup_entry,
+)
+
+TINY_TIMING = patch.multiple(
+    LKThresholdWriteCoordinator, DEBOUNCE_SECONDS=0.01, FALLBACK_RETRY_SECONDS=0.01
 )
 
 
@@ -108,3 +116,25 @@ async def test_turning_off_restores_the_default_and_carries_over_other_fields(
         c[2] for c in fake_manager.calls if c[0] == "cubic_secure_set_thresholds"
     )
     assert sent == build_thresholds(pressure_close_delay=PRESSURE_CLOSE_DELAY_DEFAULT)
+
+
+async def test_becomes_unavailable_while_a_write_is_blocked_and_recovers(
+    hass, fake_manager
+):
+    """A one-shot control still shares the device's thresholds endpoint,
+    so a failed write blocks it (and every other entity on that
+    endpoint) exactly like a debounced number edit would."""
+    await setup_entry(hass, fake_manager)
+    switch_entity_id = entity_id(hass, "switch", _switch_unique_id(CUBIC_IDENTITY))
+    fake_manager.cubic_secure_set_thresholds_result = False
+
+    with TINY_TIMING, patch_all_managers(fake_manager):
+        await hass.services.async_call(
+            "switch", "turn_on", {"entity_id": switch_entity_id}, blocking=True
+        )
+        assert hass.states.get(switch_entity_id).state == "unavailable"
+
+        fake_manager.cubic_secure_set_thresholds_result = True
+        await asyncio.sleep(0.05)
+
+    assert hass.states.get(switch_entity_id).state != "unavailable"

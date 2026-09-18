@@ -15,7 +15,7 @@ from .const import (
     DOMAIN,
     LK_CUBICSECURE_THRESHOLD_FACTORY_DEFAULTS,
 )
-from .services import pause_leak_detection_for_serial, set_thresholds_for_serial
+from .services import pause_leak_detection_for_serial
 
 
 async def async_setup_entry(
@@ -111,13 +111,24 @@ class LKResumeLeakDetectionButton(CoordinatorEntity[LKSystemCoordinator], _LKCub
         )
 
 
-class LKResetThresholdsToDefaultsButton(_LKCubicSecureButton):
+class LKResetThresholdsToDefaultsButton(
+    CoordinatorEntity[LKSystemCoordinator], _LKCubicSecureButton
+):
     """Resets every leak-detection/pressure-test threshold to its factory default.
 
     See LK_CUBICSECURE_THRESHOLD_FACTORY_DEFAULTS's own comment in
     const.py for how those values were confirmed against a real device.
-    A full write, not thresholds_with_overrides() - the point of a reset
-    is to overwrite every field, not carry any of them forward.
+    LK_CUBICSECURE_THRESHOLD_FACTORY_DEFAULTS already gives every field of
+    every category, so writing it via this device's shared
+    LKThresholdWriteCoordinator overwrites everything in one call rather
+    than carrying anything forward - the point of a reset.
+
+    A one-shot action rather than a continuously-editable field, so it
+    writes immediately (write_now(), not stage()) instead of waiting out
+    the numbers' debounce - but still shares that coordinator's
+    blocked/retry state, since it writes to the same thresholds endpoint.
+    Subclasses CoordinatorEntity (unlike the sibling buttons above) so its
+    availability re-renders when that state changes.
     """
 
     _attr_name = "Reset Thresholds To Defaults"
@@ -125,11 +136,20 @@ class LKResetThresholdsToDefaultsButton(_LKCubicSecureButton):
     _attr_entity_category = EntityCategory.CONFIG
     _unique_id_suffix = "reset_thresholds_to_defaults"
 
+    def __init__(self, coordinator: LKSystemCoordinator, device_identity: str) -> None:
+        """Initialize the button entity."""
+        CoordinatorEntity.__init__(self, coordinator)
+        _LKCubicSecureButton.__init__(self, coordinator, device_identity)
+        self._write_coordinator = coordinator.get_threshold_write_coordinator(
+            device_identity
+        )
+
+    @property
+    def available(self) -> bool:
+        """Unavailable while this device's shared endpoint is blocked
+        retrying a failed write - see LKThresholdWriteCoordinator."""
+        return super().available and not self._write_coordinator.is_blocked
+
     async def async_press(self) -> None:
         """Write every threshold back to its factory default."""
-        await set_thresholds_for_serial(
-            self.hass,
-            self.coordinator.entry,
-            self._device_identity,
-            LK_CUBICSECURE_THRESHOLD_FACTORY_DEFAULTS,
-        )
+        await self._write_coordinator.write_now(LK_CUBICSECURE_THRESHOLD_FACTORY_DEFAULTS)

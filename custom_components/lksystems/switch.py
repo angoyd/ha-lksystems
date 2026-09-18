@@ -17,8 +17,6 @@ from . import (
     cubic_secure_device_identities,
 )
 from .const import DOMAIN, PREVENT_VALVE_CLOSING_SENTINEL, PRESSURE_CLOSE_DELAY_DEFAULT
-from .pylksystems import thresholds_with_overrides
-from .services import set_thresholds_for_serial
 
 
 async def async_setup_entry(
@@ -44,6 +42,13 @@ class LKPreventValveClosingSwitch(
     PRESSURE_CLOSE_DELAY_DEFAULT - see that constant's own comment for how
     it was confirmed to be the device's factory default, not just
     whatever value happened to be configured before.
+
+    A one-shot action rather than a continuously-editable field, so it
+    writes immediately through this device's shared
+    LKThresholdWriteCoordinator (write_now(), not stage()) instead of
+    waiting out the numbers' debounce - but still shares that
+    coordinator's blocked/retry state, since it writes to the same
+    thresholds endpoint.
     """
 
     _attr_name = "Prevent Valve Closing"
@@ -55,11 +60,20 @@ class LKPreventValveClosingSwitch(
         super().__init__(coordinator)
         self._device_identity = device_identity
         self._attr_unique_id = f"LkUid_preventValveClosing_{device_identity}"
+        self._write_coordinator = coordinator.get_threshold_write_coordinator(
+            device_identity
+        )
+
+    @property
+    def available(self) -> bool:
+        """Unavailable while this device's shared endpoint is blocked
+        retrying a failed write - see LKThresholdWriteCoordinator."""
+        return super().available and not self._write_coordinator.is_blocked
 
     @property
     def is_on(self) -> bool | None:
         """Return whether the sentinel close delay is currently set."""
-        pressure = self._current_thresholds().get("pressure")
+        pressure = self._write_coordinator.effective_thresholds().get("pressure")
         if pressure is None:
             return None
         return pressure.get("closeDelay") == PREVENT_VALVE_CLOSING_SENTINEL
@@ -74,9 +88,4 @@ class LKPreventValveClosingSwitch(
 
     async def _write_close_delay(self, close_delay: int) -> None:
         """Write close_delay, carrying over every other current value."""
-        updated = thresholds_with_overrides(
-            self._current_thresholds(), "pressure", {"closeDelay": close_delay}
-        )
-        await set_thresholds_for_serial(
-            self.hass, self.coordinator.entry, self._device_identity, updated
-        )
+        await self._write_coordinator.write_now({"pressure": {"closeDelay": close_delay}})

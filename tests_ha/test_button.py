@@ -7,6 +7,9 @@ by hand - it uses whichever duration is currently set on the device's
 
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import patch
+
 from homeassistant.const import EntityCategory
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -16,6 +19,7 @@ from custom_components.lksystems.const import (
     DOMAIN,
     LK_CUBICSECURE_THRESHOLD_FACTORY_DEFAULTS,
 )
+from custom_components.lksystems.threshold_writes import LKThresholdWriteCoordinator
 
 from .conftest import (
     CUBIC_IDENTITY,
@@ -25,6 +29,10 @@ from .conftest import (
     patch_all_managers,
     pause_leak_detection_duration_unique_id as _number_unique_id,
     setup_entry,
+)
+
+TINY_TIMING = patch.multiple(
+    LKThresholdWriteCoordinator, DEBOUNCE_SECONDS=0.01, FALLBACK_RETRY_SECONDS=0.01
 )
 
 
@@ -297,3 +305,26 @@ class TestResetThresholdsToDefaultsButton:
             )
 
         assert float(hass.states.get(medium_threshold_entity_id).state) == 15.0
+
+    async def test_becomes_unavailable_while_a_write_is_blocked_and_recovers(
+        self, hass, fake_manager
+    ):
+        """A one-shot control still shares the device's thresholds
+        endpoint, so a failed write blocks it (and every other entity on
+        that endpoint) exactly like a debounced number edit would."""
+        await setup_entry(hass, fake_manager)
+        button_entity_id = entity_id(
+            hass, "button", _reset_thresholds_button_unique_id(CUBIC_IDENTITY)
+        )
+        fake_manager.cubic_secure_set_thresholds_result = False
+
+        with TINY_TIMING, patch_all_managers(fake_manager):
+            await hass.services.async_call(
+                "button", "press", {"entity_id": button_entity_id}, blocking=True
+            )
+            assert hass.states.get(button_entity_id).state == "unavailable"
+
+            fake_manager.cubic_secure_set_thresholds_result = True
+            await asyncio.sleep(0.05)
+
+        assert hass.states.get(button_entity_id).state != "unavailable"
