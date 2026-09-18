@@ -242,6 +242,13 @@ class FakeLKSystemsManager:
 
     async def cubic_secure_set_thresholds(self, cubic_identity, thresholds):
         self.calls.append(("cubic_secure_set_thresholds", cubic_identity, thresholds))
+        if self.cubic_secure_set_thresholds_result:
+            current = self.cubic_configurations_by_device.get(
+                cubic_identity, self.cubic_configuration_data
+            )
+            updated = {**current, "thresholds": thresholds}
+            self.cubic_configurations_by_device[cubic_identity] = updated
+            self.cubic_configurations_cached_by_device[cubic_identity] = updated
         return self.cubic_secure_set_thresholds_result
 
 

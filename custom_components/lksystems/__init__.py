@@ -10,7 +10,6 @@ import asyncio
 import base64
 import json
 from typing import Any, Dict
-import time
 
 # Make sure jwt is installed using: pip install pyjwt
 try:
@@ -75,6 +74,7 @@ PLATFORMS = [
     Platform.NUMBER,
     Platform.BUTTON,
     Platform.VALVE,
+    Platform.SWITCH,
 ]
 
 
@@ -736,13 +736,15 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             # for longer than VALVE_ACTION_MAX_RETRY_SECONDS. Wrong only
             # if the write itself failed downstream of a successful API
             # call, in which case the next regular poll corrects it.
-            self.data["cubic_devices"][device_identity]["configuration"][
-                "valveState"
-            ] = (
-                CUBIC_SECURE_VALVE_STATE_CLOSED
-                if expect_closed
-                else CUBIC_SECURE_VALVE_STATE_OPEN
+            configuration = self.data["cubic_devices"][device_identity].get(
+                "configuration"
             )
+            if configuration is not None:
+                configuration["valveState"] = (
+                    CUBIC_SECURE_VALVE_STATE_CLOSED
+                    if expect_closed
+                    else CUBIC_SECURE_VALVE_STATE_OPEN
+                )
             self._resolve_valve_action(device_identity)
             _LOGGER.debug(
                 "Giving up on confirming valve %s reached the requested "
@@ -848,9 +850,21 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             # and the leak-detection expiry check
             # (_schedule_leak_detection_expiry_refresh) only ever calls
             # this at or after a pause's own target end time.
-            self.async_set_updated_data(self.data)
+            self._publish_updated_data()
 
         return success
+
+    def _publish_updated_data(self) -> None:
+        """Notify listeners of a manual data update, refreshing
+        next_update_time/update_time to match the schedule reset
+        async_set_updated_data() performs (see its own docstring) - or a
+        countdown built on next_update_time (sensor.py's Next Update In)
+        would freeze until the rescheduled poll actually happens.
+        """
+        now = dt_util.now()
+        self.data["update_time"] = now.isoformat()
+        self.data["next_update_time"] = (now + self.update_interval).isoformat()
+        self.async_set_updated_data(self.data)
 
     async def _update_cubic_secure_configuration(
         self, device_identity: str, *, force_update: bool
@@ -970,7 +984,10 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         explicitly requested for it via async_request_forced_refresh()."""
         if device_identity in forced_device_ids:
             return True
-        return int(time.time()) - cache_updated > self.update_interval.total_seconds()
+        return (
+            int(dt_util.utcnow().timestamp()) - cache_updated
+            > self.update_interval.total_seconds()
+        )
 
     async def _fetch_data(self) -> LkStructureResp:  # noqa: C901
         """Fetch the latest data from the source."""

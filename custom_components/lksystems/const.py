@@ -330,7 +330,7 @@ LK_CUBICSECURE_THRESHOLD_NUMBERS: dict[str, LKThresholdNumberDescription] = {
         fields=("closeDelay", "notificationDelay"),
         native_min_value=30,
         native_max_value=120,
-        native_step=5,
+        native_step=10,
         native_unit_of_measurement=UnitOfTime.SECONDS,
         icon="mdi:timer-alert-outline",
     ),
@@ -352,14 +352,14 @@ LK_CUBICSECURE_THRESHOLD_NUMBERS: dict[str, LKThresholdNumberDescription] = {
         fields=("closeDelay", "notificationDelay"),
         native_min_value=5,
         native_max_value=120,
-        native_step=1,
+        native_step=5,
         native_unit_of_measurement=UnitOfTime.MINUTES,
         icon="mdi:timer-alert-outline",
         api_unit_of_measurement=UnitOfTime.SECONDS,
     ),
     "pressure_sensitivity": LKThresholdNumberDescription(
         key="pressure_sensitivity",
-        name="Pressure Test Sensitivity",
+        name="Automatic Pressure Test Sensitivity",
         category="pressure",
         fields=("sensitivity",),
         native_min_value=0.2,
@@ -370,13 +370,46 @@ LK_CUBICSECURE_THRESHOLD_NUMBERS: dict[str, LKThresholdNumberDescription] = {
     ),
     "pressure_duration": LKThresholdNumberDescription(
         key="pressure_duration",
-        name="Pressure Test Duration",
+        name="Automatic Pressure Test Duration",
         category="pressure",
         fields=("duration",),
         native_min_value=45,
         native_max_value=150,
-        native_step=5,
+        native_step=1,
         native_unit_of_measurement=UnitOfTime.SECONDS,
         icon="mdi:timer-sand",
     ),
+}
+
+# The app's "prevent valve closing" toggle isn't a separate API field -
+# confirmed empirically (a before/after diagnostics diff around toggling it
+# in the app) that it overloads pressure.closeDelay, writing a value one
+# below the signed-32-bit max so that delay effectively never elapses.
+PREVENT_VALVE_CLOSING_SENTINEL: Final = 2147483646
+
+# Every value below is confirmed against a real Cubic Secure device's
+# "reset to factory defaults" action (Advanced alarm settings screen):
+# a before/after diagnostics diff showed only leakMedium.threshold change
+# (5.0 -> 15.0, correcting stale data from this integration's own
+# now-fixed set_thresholds bug) - every other field, including this one,
+# was already sitting at its factory default and stayed untouched.
+PRESSURE_CLOSE_DELAY_DEFAULT: Final = 252000
+
+LK_CUBICSECURE_THRESHOLD_FACTORY_DEFAULTS: Final[dict] = {
+    "pressure": {
+        "sensitivity": 0.3,
+        "duration": 45,
+        "closeDelay": PRESSURE_CLOSE_DELAY_DEFAULT,
+        "notificationDelay": 169200,
+    },
+    "leakMedium": {
+        "threshold": 15.0,
+        "closeDelay": 2700,
+        "notificationDelay": 2700,
+    },
+    "leakLarge": {
+        "threshold": 1500.0,
+        "closeDelay": 90,
+        "notificationDelay": 90,
+    },
 }

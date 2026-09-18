@@ -1252,6 +1252,30 @@ class TestRefreshCubicSecureConfiguration:
 
         assert result is False
 
+    async def test_updates_next_update_time_to_match_the_reset_schedule(
+        self, hass, fake_manager
+    ):
+        """Regression test: async_set_updated_data() (used to publish this
+        confirmation read) resets the coordinator's own refresh schedule
+        to fire update_interval from now, per its own docstring -
+        next_update_time must move with it, or a countdown sensor built
+        on it freezes at 0 until the rescheduled poll actually happens.
+        """
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            data = await coordinator._async_update_data()
+        coordinator.async_set_updated_data(data)
+        stale_next_update_time = coordinator.data["next_update_time"]
+
+        with _patch_manager(fake_manager):
+            await coordinator.refresh_cubic_secure_configuration(CUBIC_IDENTITY)
+
+        assert coordinator.data["next_update_time"] != stale_next_update_time
+        refreshed = dt_util.parse_datetime(coordinator.data["next_update_time"])
+        assert refreshed > dt_util.utcnow()
+
 
 class TestLeakDetectionPausedUntilTracking:
     """See LKSystemCoordinator.leak_detection_paused_until's own docstring

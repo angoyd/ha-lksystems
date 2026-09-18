@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from homeassistant.components.sensor import (
@@ -19,10 +19,12 @@ from homeassistant.const import (
     PERCENTAGE,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     UnitOfTemperature,
+    UnitOfTime,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -176,6 +178,9 @@ async def async_setup_entry(
 
                 cubic_entities.append(
                     LKLeakDetectionPausedUntilSensor(coordinator, device_identity)
+                )
+                cubic_entities.append(
+                    LKNextUpdateCountdownSensor(coordinator, device_identity)
                 )
 
                 async_add_entities(cubic_entities, True)
@@ -1085,3 +1090,67 @@ class LKLeakDetectionPausedUntilSensor(AbstractLkCubicSensor):
         return last_successful_cloud_fetch_attributes(
             self.coordinator.last_successful_cloud_fetch
         )
+
+
+class LKNextUpdateCountdownSensor(
+    CubicSecureEntityMixin, CoordinatorEntity[LKSystemCoordinator], SensorEntity
+):
+    """Seconds remaining until the coordinator's next scheduled poll.
+
+    _handle_coordinator_update alone would only change this once per
+    actual poll - jumping straight back to the full interval - never
+    showing anything in between. Ticking down between polls needs its
+    own timer, independent of the coordinator.
+    """
+
+    _TICK_INTERVAL = timedelta(seconds=1)
+
+    _attr_name = "Next Update In"
+    _attr_icon = "mdi:timer-sand"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+
+    def __init__(self, coordinator: LKSystemCoordinator, device_identity: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._device_identity = device_identity
+        self._attr_unique_id = f"LkUid_nextUpdateCountdown_{device_identity}"
+        self._unsub_tick: CALLBACK_TYPE | None = None
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the whole seconds remaining until the next scheduled poll."""
+        next_update_time = self.coordinator.data.get("next_update_time")
+        if next_update_time is None:
+            return None
+        remaining = dt_util.parse_datetime(next_update_time) - dt_util.utcnow()
+        return max(0, round(remaining.total_seconds()))
+
+    async def async_added_to_hass(self) -> None:
+        """Start ticking the countdown down between coordinator polls."""
+        await super().async_added_to_hass()
+        self._unsub_tick = async_track_time_interval(
+            self.hass, self._handle_tick, self._TICK_INTERVAL
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Stop ticking - a timer left running past entity teardown would
+        otherwise keep firing against a stale entity forever."""
+        if self._unsub_tick is not None:
+            self._unsub_tick()
+            self._unsub_tick = None
+        await super().async_will_remove_from_hass()
+
+    @callback
+    def _handle_tick(self, _now: datetime) -> None:
+        """Recompute and publish the countdown between polls."""
+        self.async_write_ha_state()
+
+    async def async_update(self) -> None:
+        """No live fetch of its own - the value is derived from data the
+        coordinator already has plus the wall clock. Without this
+        override, CoordinatorEntity's own async_update() would call
+        coordinator.async_request_refresh() on every entity add/reload,
+        an extra API round-trip this entity never needs."""
+        self._attr_available = True

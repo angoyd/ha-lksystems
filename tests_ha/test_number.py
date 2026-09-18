@@ -11,6 +11,7 @@ seconds, matching the API's own "pause for N seconds" contract.
 
 from __future__ import annotations
 
+import pytest
 from homeassistant.const import EntityCategory
 from homeassistant.core import State
 from homeassistant.helpers import device_registry as dr
@@ -20,6 +21,7 @@ from pytest_homeassistant_custom_component.common import mock_restore_cache_with
 from custom_components.lksystems.const import (
     DEFAULT_PAUSE_LEAK_DETECTION_SECONDS,
     DOMAIN,
+    LK_CUBICSECURE_THRESHOLD_NUMBERS,
     PAUSE_LEAK_DETECTION_MAX_SECONDS,
     PAUSE_LEAK_DETECTION_MIN_SECONDS,
 )
@@ -308,3 +310,26 @@ class TestLeakDetectionThresholdNumbers:
         assert sent == build_thresholds(
             large_leak_close_delay=60, large_leak_notification_delay=60
         )
+
+    @pytest.mark.parametrize(
+        ("key", "native_min_value", "native_max_value", "native_step"),
+        [
+            ("large_leak_threshold", 500, 2500, 50),
+            ("large_leak_delay", 30, 120, 10),
+            ("medium_leak_threshold", 2, 30, 1),
+            ("medium_leak_delay", 5, 120, 5),
+            ("pressure_sensitivity", 0.2, 0.8, 0.1),
+            ("pressure_duration", 45, 150, 1),
+        ],
+    )
+    def test_field_scope_matches_the_app(
+        self, key, native_min_value, native_max_value, native_step
+    ):
+        """Min/max/step come from the LK app's own Advanced alarm settings
+        screen (dragging every slider to both extremes on a real account),
+        not just the raw API schema."""
+        description = LK_CUBICSECURE_THRESHOLD_NUMBERS[key]
+
+        assert description.native_min_value == native_min_value
+        assert description.native_max_value == native_max_value
+        assert description.native_step == native_step
