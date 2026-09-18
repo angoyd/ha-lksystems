@@ -173,6 +173,23 @@ class LKThresholds(TypedDict):
     leakLarge: LKLeakThresholds
 
 
+def thresholds_with_overrides(
+    current: LKThresholds | dict, category: str, overrides: dict
+) -> dict:
+    """Return a full thresholds payload with one category's fields
+    overridden, carrying every other current value over unchanged.
+
+    cubic_secure_set_thresholds() only accepts the complete object at
+    once - there's no per-field patch endpoint - so every caller building
+    a change from just one or two fields (a number entity, the
+    set_thresholds service) needs this same carry-forward, not a fresh
+    copy of it. Never mutates `current` itself.
+    """
+    updated = {key: dict(value) for key, value in current.items()}
+    updated.setdefault(category, {}).update(overrides)
+    return updated
+
+
 class LKSystemsManager:
     """LKSystems manager."""
 
@@ -336,7 +353,7 @@ class LKSystemsManager:
                     await self._sleep_before_retry(endpoint, delay, retry_attempt)
                     retry_attempt += 1
 
-                except (ClientResponseError, ClientError) as error:
+                except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
                     return (
                         await self.handle_client_error(endpoint, headers, error)
                     ), None
@@ -419,7 +436,7 @@ class LKSystemsManager:
                 _LOGGER.error("Unexpected HTTP status code: %s", response.status)
                 return False
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
     async def get_cubic_secure_measurement(
@@ -624,7 +641,7 @@ class LKSystemsManager:
                     and len(self._devices.get("devices", [])) > 0
                 )
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             # Handle the error but don't immediately return False
             await self.handle_client_error(endpoint, headers, error)
             # Return True if we already have devices from structure
@@ -671,7 +688,7 @@ class LKSystemsManager:
                 )
                 return False
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
     @property
@@ -720,7 +737,7 @@ class LKSystemsManager:
                 )
                 return False
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
     async def get_arc_sense_configuration(self, arc_sense_mac: str, force_update=False):
@@ -764,7 +781,7 @@ class LKSystemsManager:
                 )
                 return False
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
     async def get_device_measurement(self, device_identity: str, force_update=False):
@@ -810,7 +827,7 @@ class LKSystemsManager:
                 )
                 return False
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
     async def get_device_configuration(self, device_identity: str, force_update=False):
@@ -852,7 +869,7 @@ class LKSystemsManager:
                 )
                 return False
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
     async def get_device_title(self, device_identity: str, force_update=False):
@@ -891,7 +908,7 @@ class LKSystemsManager:
                 )
                 return False
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
     async def set_device_temperature(self, device_identity: str, temperature: float):
@@ -977,7 +994,7 @@ class LKSystemsManager:
                 )
                 return False
 
-        except (ClientResponseError, ClientError) as error:
+        except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
             return await self.handle_client_error(endpoint, headers, error)
 
     async def set_thermostat_temperature(self, device_id, temperature):
@@ -1189,8 +1206,8 @@ class LKSystemsManager:
     async def cubic_secure_set_thresholds(
         self, cubic_identity: str, threshold: LKThresholds
     ):
-        """Set threshold"""
-        endpoint = f"control/cubic/secure/{cubic_identity}/threshold"
+        """Set leak-detection thresholds"""
+        endpoint = f"control/cubic/secure/{cubic_identity}/thresholds"
         payload = threshold
         success, res = await self._post(endpoint, payload)
         if success:

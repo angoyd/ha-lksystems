@@ -4,13 +4,18 @@ from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import CubicSecureEntityMixin, LKSystemCoordinator, cubic_secure_device_identities
-from .const import DEFAULT_PAUSE_LEAK_DETECTION_SECONDS, DOMAIN
-from .services import pause_leak_detection_for_serial
+from .const import (
+    DEFAULT_PAUSE_LEAK_DETECTION_SECONDS,
+    DOMAIN,
+    LK_CUBICSECURE_THRESHOLD_FACTORY_DEFAULTS,
+)
+from .services import pause_leak_detection_for_serial, set_thresholds_for_serial
 
 
 async def async_setup_entry(
@@ -22,7 +27,11 @@ async def async_setup_entry(
     async_add_entities(
         button_class(coordinator, device_identity)
         for device_identity in cubic_secure_device_identities(coordinator)
-        for button_class in (LKPauseLeakDetectionButton, LKResumeLeakDetectionButton)
+        for button_class in (
+            LKPauseLeakDetectionButton,
+            LKResumeLeakDetectionButton,
+            LKResetThresholdsToDefaultsButton,
+        )
     )
 
 
@@ -99,4 +108,28 @@ class LKResumeLeakDetectionButton(CoordinatorEntity[LKSystemCoordinator], _LKCub
         """Cancel this device's in-progress leak detection pause."""
         await pause_leak_detection_for_serial(
             self.hass, self.coordinator.entry, self._device_identity, 0
+        )
+
+
+class LKResetThresholdsToDefaultsButton(_LKCubicSecureButton):
+    """Resets every leak-detection/pressure-test threshold to its factory default.
+
+    See LK_CUBICSECURE_THRESHOLD_FACTORY_DEFAULTS's own comment in
+    const.py for how those values were confirmed against a real device.
+    A full write, not thresholds_with_overrides() - the point of a reset
+    is to overwrite every field, not carry any of them forward.
+    """
+
+    _attr_name = "Reset Thresholds To Defaults"
+    _attr_icon = "mdi:restore"
+    _attr_entity_category = EntityCategory.CONFIG
+    _unique_id_suffix = "reset_thresholds_to_defaults"
+
+    async def async_press(self) -> None:
+        """Write every threshold back to its factory default."""
+        await set_thresholds_for_serial(
+            self.hass,
+            self.coordinator.entry,
+            self._device_identity,
+            LK_CUBICSECURE_THRESHOLD_FACTORY_DEFAULTS,
         )

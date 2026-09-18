@@ -12,7 +12,9 @@ directly, so a bug in how sensor.py applies them would still show up.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
+from unittest.mock import patch
 
 from homeassistant.const import EntityCategory
 from homeassistant.core import State
@@ -24,13 +26,18 @@ from pytest_homeassistant_custom_component.common import (
     mock_restore_cache_with_extra_data,
 )
 
-from custom_components.lksystems.const import DOMAIN, LK_CUBICSECURE_CONFIG_SENSORS
+from custom_components.lksystems.const import (
+    DEFAULT_UPDATE_INTERVAL,
+    DOMAIN,
+    LK_CUBICSECURE_CONFIG_SENSORS,
+)
 from custom_components.lksystems.restore import ATTR_LAST_SUCCESSFUL_CLOUD_FETCH
 from custom_components.lksystems.sensor import (
     LKArcHubEntity,
     LKArcSensorEntity,
     LKCubicSensor,
     LKLeakDetectionPausedUntilSensor,
+    LKNextUpdateCountdownSensor,
 )
 
 from .conftest import (
@@ -361,6 +368,93 @@ class TestLeakDetectionPausedUntilSensor:
         await entity.async_added_to_hass()
 
         assert entity.native_value == restored_value
+
+
+class TestNextUpdateCountdownSensor:
+    """Minutes remaining until the coordinator's next scheduled poll -
+    ticks down between polls via its own timer, not just on coordinator
+    updates (which only fire once per actual poll)."""
+
+    async def test_reflects_seconds_remaining_after_a_fresh_poll(
+        self, hass, fake_manager
+    ):
+        entry = await setup_entry(hass, fake_manager)
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+
+        entity = LKNextUpdateCountdownSensor(coordinator, CUBIC_IDENTITY)
+
+        assert entity.native_value == DEFAULT_UPDATE_INTERVAL * 60
+
+    async def test_native_value_reflects_elapsed_time(self, hass, fake_manager):
+        """The countdown is computed fresh from the wall clock each read,
+        not just from the coordinator's last poll."""
+        entry = await setup_entry(hass, fake_manager)
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+        entity = LKNextUpdateCountdownSensor(coordinator, CUBIC_IDENTITY)
+
+        two_minutes_later = dt_util.utcnow() + timedelta(minutes=2)
+        with patch("custom_components.lksystems.sensor.dt_util.utcnow") as mock_utcnow:
+            mock_utcnow.return_value = two_minutes_later
+
+            assert entity.native_value == (DEFAULT_UPDATE_INTERVAL - 2) * 60
+
+    async def test_ticks_periodically_while_added_to_hass(self, hass, fake_manager):
+        """Between actual polls, _handle_coordinator_update alone would
+        never re-publish this entity's state - it needs its own timer.
+        _TICK_INTERVAL is patched down to a few milliseconds so this test
+        can wait for a real tick instead of taking the production 1s -
+        see tiny_valve_retry_timings() for why simulated-time helpers
+        (async_fire_time_changed) can't drive this: native_value reads
+        the real dt_util.utcnow(), which those helpers don't advance.
+        """
+        with patch(
+            "custom_components.lksystems.sensor.LKNextUpdateCountdownSensor"
+            "._TICK_INTERVAL",
+            timedelta(seconds=0.01),
+        ):
+            await setup_entry(hass, fake_manager)
+            sensor_entity_id = entity_id(
+                hass, "sensor", f"LkUid_nextUpdateCountdown_{CUBIC_IDENTITY}"
+            )
+            # last_reported, not last_updated: the countdown's value and
+            # attributes are unchanged between ticks (real elapsed time is
+            # sub-minute), and HA's state machine only bumps last_updated
+            # on an actual value/attribute change - last_reported is the
+            # one that reflects every write, a no-op one included.
+            first_reported = hass.states.get(sensor_entity_id).last_reported
+
+            await asyncio.sleep(0.3)  # comfortably past the (patched) tiny interval
+
+            assert hass.states.get(sensor_entity_id).last_reported > first_reported
+
+    async def test_belongs_to_the_cubic_secure_device(self, hass, fake_manager):
+        await setup_entry(hass, fake_manager)
+        sensor_entity_id = entity_id(
+            hass, "sensor", f"LkUid_nextUpdateCountdown_{CUBIC_IDENTITY}"
+        )
+
+        device = dr.async_get(hass).async_get_device(
+            identifiers={(DOMAIN, CUBIC_IDENTITY)}
+        )
+        registry_entry = er.async_get(hass).async_get(sensor_entity_id)
+
+        assert registry_entry.device_id == device.id
+
+    async def test_stops_ticking_once_removed(self, hass, fake_manager):
+        """Regression test: a timer left running after the entity is torn
+        down (e.g. on integration reload) would otherwise keep firing
+        against a stale entity forever."""
+        entry = await setup_entry(hass, fake_manager)
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+
+        entity = LKNextUpdateCountdownSensor(coordinator, CUBIC_IDENTITY)
+        entity.hass = hass
+        await entity.async_added_to_hass()
+        assert entity._unsub_tick is not None
+
+        await entity.async_will_remove_from_hass()
+
+        assert entity._unsub_tick is None
 
 
 def _thermostat_device(coordinator) -> dict:
