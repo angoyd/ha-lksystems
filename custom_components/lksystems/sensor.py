@@ -1148,9 +1148,13 @@ class LKNextUpdateCountdownSensor(
         self.async_write_ha_state()
 
     async def async_update(self) -> None:
-        """No live fetch of its own - the value is derived from data the
-        coordinator already has plus the wall clock. Without this
-        override, CoordinatorEntity's own async_update() would call
-        coordinator.async_request_refresh() on every entity add/reload,
-        an extra API round-trip this entity never needs."""
-        self._attr_available = True
+        """No-op: no live fetch of its own - the value is derived from
+        data the coordinator already has plus the wall clock.
+
+        Home Assistant calls this unconditionally (regardless of
+        should_poll) when a platform passes update_before_add=True to
+        async_add_entities() - sensor.py's own setup does exactly that
+        for every Cubic Secure sensor. Without this override,
+        CoordinatorEntity's own async_update() would call
+        coordinator.async_request_refresh() there, an extra API
+        round-trip this entity never needs."""

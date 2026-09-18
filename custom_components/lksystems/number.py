@@ -18,7 +18,6 @@ from homeassistant.util.unit_conversion import DurationConverter
 from . import (
     CubicSecureEntityMixin,
     LKSystemCoordinator,
-    cubic_secure_configuration,
     cubic_secure_device_identities,
 )
 from .const import (
@@ -195,14 +194,6 @@ class LKThresholdNumber(CubicSecureEntityMixin, CoordinatorEntity[LKSystemCoordi
         )
         await set_thresholds_for_serial(
             self.hass, self.coordinator.entry, self._device_identity, updated
-        )
-
-    def _current_thresholds(self) -> dict:
-        return (
-            cubic_secure_configuration(self.coordinator, self._device_identity).get(
-                "thresholds"
-            )
-            or {}
         )
 
     def _current_category(self) -> dict:

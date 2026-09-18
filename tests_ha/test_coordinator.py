@@ -643,6 +643,30 @@ class TestForceDeviceUpdate:
             == 250
         )
 
+    async def test_updates_next_update_time_to_match_the_reset_schedule(
+        self, hass, fake_manager
+    ):
+        """Regression test: async_set_updated_data() (published after this
+        forced update) resets the coordinator's own refresh schedule to
+        fire update_interval from now, same as any other manual data
+        push - see TestRefreshCubicSecureConfiguration's sibling test for
+        the original case this was found in.
+        """
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+
+        with _patch_manager(fake_manager):
+            data = await coordinator._async_update_data()
+        coordinator.async_set_updated_data(data)
+        stale_next_update_time = coordinator.data["next_update_time"]
+
+        with _patch_manager(fake_manager):
+            await coordinator.force_device_update(THERMOSTAT_MAC)
+
+        assert coordinator.data["next_update_time"] != stale_next_update_time
+        refreshed = dt_util.parse_datetime(coordinator.data["next_update_time"])
+        assert refreshed > dt_util.utcnow()
+
     async def test_measurement_fetch_failure_returns_false(self, hass, fake_manager):
         entry = _make_entry(hass)
         coordinator = LKSystemCoordinator(hass, entry)

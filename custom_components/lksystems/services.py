@@ -282,13 +282,13 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
         # Deferred to avoid a circular import: __init__.py imports
         # async_setup_services from this module at module load time, so a
-        # top-level "from . import cubic_secure_configuration" here would
-        # try to read it off __init__.py before that module has finished
+        # top-level "from . import cubic_secure_thresholds" here would try
+        # to read it off __init__.py before that module has finished
         # executing.
-        from . import cubic_secure_configuration
+        from . import cubic_secure_thresholds
 
         coordinator = hass.data[DOMAIN][entry.entry_id]
-        current = cubic_secure_configuration(coordinator, sn).get("thresholds") or {}
+        current = cubic_secure_thresholds(coordinator, sn)
 
         thresholds = thresholds_with_overrides(
             current,

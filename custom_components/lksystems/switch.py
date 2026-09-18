@@ -14,7 +14,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import (
     CubicSecureEntityMixin,
     LKSystemCoordinator,
-    cubic_secure_configuration,
     cubic_secure_device_identities,
 )
 from .const import DOMAIN, PREVENT_VALVE_CLOSING_SENTINEL, PRESSURE_CLOSE_DELAY_DEFAULT
@@ -80,12 +79,4 @@ class LKPreventValveClosingSwitch(
         )
         await set_thresholds_for_serial(
             self.hass, self.coordinator.entry, self._device_identity, updated
-        )
-
-    def _current_thresholds(self) -> dict:
-        return (
-            cubic_secure_configuration(self.coordinator, self._device_identity).get(
-                "thresholds"
-            )
-            or {}
         )
