@@ -215,6 +215,12 @@ class LKSystemsManager:
         self._hub_devices = None
         self._device_measurements = {}
         self._device_configurations = {}
+        # Set whenever a 429 is observed by _request_with_retry() (whether
+        # eventually retried successfully or not), reset to None at the
+        # start of every call - lets a caller learn "that failed because
+        # of rate limiting, retry after N seconds" without changing what
+        # any existing call returns.
+        self.last_rate_limit_retry_after: float | None = None
 
     async def __aenter__(self):
         """Asynchronous enter."""
@@ -315,6 +321,7 @@ class LKSystemsManager:
         cooldown, which is real server-side state for whoever asks next.
         """
         url = self.BASE_URL + endpoint
+        self.last_rate_limit_retry_after = None
 
         async def attempt() -> tuple[bool, dict | None]:
             await self._wait_out_shared_cooldown(endpoint, url)
@@ -329,9 +336,9 @@ class LKSystemsManager:
 
                     async with send_request(headers) as response:
                         if response.status == RATE_LIMIT_STATUS:
-                            _record_rate_limited(
-                                endpoint, _rate_limit_backoff(response)
-                            )
+                            backoff = _rate_limit_backoff(response)
+                            _record_rate_limited(endpoint, backoff)
+                            self.last_rate_limit_retry_after = backoff
 
                         delay = _retry_delay_for_response(response, retry_attempt)
                         if delay is None:

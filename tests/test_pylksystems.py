@@ -807,6 +807,71 @@ class TestRateLimitBackoff:
         assert any(record.levelno >= logging.ERROR for record in caplog.records)
 
 
+class TestLastRateLimitRetryAfter:
+    """last_rate_limit_retry_after lets a caller tell "this failed because
+    of rate limiting, retry after N seconds" apart from any other kind of
+    failure, without changing what any existing call returns.
+    """
+
+    async def test_none_before_any_call(self, manager):
+        assert manager.last_rate_limit_retry_after is None
+
+    async def test_set_when_a_429_is_observed_even_if_eventually_retried_successfully(
+        self, manager, mock_sleep
+    ):
+        url = BASE_URL + "service/cubic/secure/cubic-1/measurement/0"
+
+        with aioresponses() as m:
+            m.get(url, status=429, headers={"Retry-After": "7"})
+            m.get(url, payload={"flow": 0.0}, status=200)
+            async with manager:
+                result = await manager.get_cubic_secure_measurement("cubic-1")
+
+        assert result is True
+        assert manager.last_rate_limit_retry_after == 7.0
+
+    async def test_set_when_retries_are_exhausted(self, manager, mock_sleep):
+        manager.userid = "user-123"
+        url = BASE_URL + "service/users/user/user-123/structure/1"
+
+        with aioresponses() as m:
+            m.get(url, status=429, headers={"Retry-After": "42"}, repeat=True)
+            async with manager:
+                await manager.get_user_structure()
+
+        assert manager.last_rate_limit_retry_after == 42.0
+
+    async def test_none_after_a_non_429_failure(self, manager):
+        manager.userid = "user-123"
+        url = BASE_URL + "service/users/user/user-123/structure/1"
+
+        with aioresponses() as m:
+            m.get(url, status=500)
+            async with manager:
+                await manager.get_user_structure()
+
+        assert manager.last_rate_limit_retry_after is None
+
+    async def test_reset_to_none_at_the_start_of_the_next_call(self, manager, mock_sleep):
+        """A stale value from a previous failed call must not look like
+        it describes the current one."""
+        manager.userid = "user-123"
+        url = BASE_URL + "service/users/user/user-123/structure/1"
+
+        with aioresponses() as m:
+            m.get(url, status=429, headers={"Retry-After": "5"}, repeat=True)
+            async with manager:
+                await manager.get_user_structure()
+        assert manager.last_rate_limit_retry_after == 5.0
+
+        with aioresponses() as m:
+            m.get(url, payload=[], status=200)
+            async with manager:
+                await manager.get_user_structure()
+
+        assert manager.last_rate_limit_retry_after is None
+
+
 class TestSharedRateLimitCooldown:
     """A 429's Retry-After becomes a cooldown deadline for its endpoint,
     visible to every LKSystemsManager instance in the process - not just
