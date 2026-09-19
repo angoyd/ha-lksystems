@@ -7,6 +7,7 @@ merge/dedupe, error handling) without ever hitting the real LK Systems API.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock, patch
 
@@ -417,6 +418,101 @@ class TestCubicSecureMeasurement:
         assert manager.cubic_secure_measurement is None
 
 
+class TestCubicSecureSetThresholds:
+    async def test_posts_to_the_real_plural_endpoint(self, manager):
+        """The real API endpoint is /thresholds (plural) - confirmed
+        against the actual OpenAPI spec and, live, with a real device
+        (a singular /threshold URL 404s every time)."""
+        thresholds = {
+            "pressure": {
+                "sensitivity": 0.3,
+                "duration": 45,
+                "closeDelay": 255600,
+                "notificationDelay": 169200,
+            },
+            "leakMedium": {
+                "threshold": 10.0,
+                "closeDelay": 1800,
+                "notificationDelay": 1800,
+            },
+            "leakLarge": {
+                "threshold": 1500.0,
+                "closeDelay": 90,
+                "notificationDelay": 90,
+            },
+        }
+
+        with aioresponses() as m:
+            m.post(
+                BASE_URL + "control/cubic/secure/cubic-1/thresholds",
+                payload=thresholds,
+                status=200,
+            )
+            async with manager:
+                result = await manager.cubic_secure_set_thresholds(
+                    "cubic-1", thresholds
+                )
+
+        assert result is True
+
+    async def test_error_status_returns_false(self, manager):
+        with aioresponses() as m:
+            m.post(
+                BASE_URL + "control/cubic/secure/cubic-1/thresholds",
+                status=404,
+            )
+            async with manager:
+                result = await manager.cubic_secure_set_thresholds("cubic-1", {})
+
+        assert result is False
+
+
+class TestThresholdsWithOverrides:
+    """cubic_secure_set_thresholds() only accepts the full object at
+    once - this is the one place that carry-forward logic lives, shared
+    by both the leak-detection threshold number entities and the
+    set_thresholds service.
+    """
+
+    def _sample_thresholds(self):
+        return {
+            "pressure": {"sensitivity": 0.3, "duration": 45},
+            "leakMedium": {"threshold": 10.0, "closeDelay": 1800},
+            "leakLarge": {"threshold": 1500.0, "closeDelay": 90},
+        }
+
+    def test_overrides_only_the_given_category_and_fields(self):
+        current = self._sample_thresholds()
+
+        updated = pylksystems.thresholds_with_overrides(
+            current, "leakLarge", {"threshold": 2000.0}
+        )
+
+        assert updated["leakLarge"] == {"threshold": 2000.0, "closeDelay": 90}
+        assert updated["pressure"] == current["pressure"]
+        assert updated["leakMedium"] == current["leakMedium"]
+
+    def test_can_override_multiple_fields_in_one_category(self):
+        current = self._sample_thresholds()
+
+        updated = pylksystems.thresholds_with_overrides(
+            current, "leakLarge", {"closeDelay": 60, "notificationDelay": 60}
+        )
+
+        assert updated["leakLarge"] == {
+            "threshold": 1500.0,
+            "closeDelay": 60,
+            "notificationDelay": 60,
+        }
+
+    def test_does_not_mutate_the_input(self):
+        current = self._sample_thresholds()
+
+        pylksystems.thresholds_with_overrides(current, "leakLarge", {"threshold": 2000.0})
+
+        assert current["leakLarge"]["threshold"] == 1500.0
+
+
 class TestSetDeviceTemperature:
     async def test_success_converts_and_sends_tenths_of_degree(self, manager):
         with aioresponses() as m:
@@ -459,6 +555,22 @@ class TestSetDeviceTemperature:
 
         assert result is False
         assert "AA:BB:CC" not in manager.device_measurements
+
+    async def test_timeout_during_post_is_handled(self, manager):
+        with aioresponses() as m:
+            m.get(
+                BASE_URL + "service/arc/sense/AA:BB:CC/measurement/true",
+                payload={"currentTemperature": 210, "desiredTemperature": 200},
+                status=200,
+            )
+            m.post(
+                BASE_URL + "service/arc/sense/AA:BB:CC/measurement/true",
+                exception=asyncio.TimeoutError(),
+            )
+            async with manager:
+                result = await manager.set_device_temperature("AA:BB:CC", 21.5)
+
+        assert result is False
 
 
 class TestSensitiveDataNotLogged:
@@ -510,6 +622,71 @@ class TestClientSessionTimeout:
 
         assert timeout.total is not None
         assert timeout.total <= 30
+
+
+class TestUnguardedRequestTimeout:
+    """A slow/unresponsive LK API response (aiohttp's ClientTimeout firing)
+    must be handled the same way any other request failure is, not escape
+    uncaught up to the coordinator - which logs it as a bare, endpoint-less
+    "Timeout fetching lksystems data" and fails the whole update.
+
+    _get()/_post() already guarantee this (see TestClientSessionTimeout's
+    sibling coverage via _request_with_retry's own timeout handling), but
+    these methods build their own request directly instead of going
+    through that shared, hardened path.
+    """
+
+    @pytest.mark.parametrize(
+        ("http_method", "endpoint", "call"),
+        [
+            ("post", "auth/auth/login", lambda m: m.login()),
+            (
+                "get",
+                "service/users/user/user-123/structure/false",
+                lambda m: m.get_devices(),
+            ),
+            (
+                "get",
+                "service/arc/hub/hub-1/structure/false",
+                lambda m: m.get_hub_devices("hub-1"),
+            ),
+            (
+                "get",
+                "service/arc/sense/AA:BB:CC/measurement/false",
+                lambda m: m.get_arc_sense_measurement("AA:BB:CC"),
+            ),
+            (
+                "get",
+                "service/arc/sense/AA:BB:CC/configuration/false",
+                lambda m: m.get_arc_sense_configuration("AA:BB:CC"),
+            ),
+            (
+                "get",
+                "service/arc/sense/AA:BB:CC/measurement/false",
+                lambda m: m.get_device_measurement("AA:BB:CC"),
+            ),
+            (
+                "get",
+                "service/arc/sense/AA:BB:CC/configuration/false",
+                lambda m: m.get_device_configuration("AA:BB:CC"),
+            ),
+            (
+                "get",
+                "service/devices/device/AA:BB:CC/title/false",
+                lambda m: m.get_device_title("AA:BB:CC"),
+            ),
+        ],
+    )
+    async def test_timeout_is_handled_not_raised(
+        self, manager, http_method, endpoint, call
+    ):
+        manager.userid = "user-123"
+        with aioresponses() as m:
+            getattr(m, http_method)(BASE_URL + endpoint, exception=asyncio.TimeoutError())
+            async with manager:
+                result = await call(manager)
+
+        assert result is False
 
 
 @pytest.mark.usefixtures("mock_sleep")
@@ -628,6 +805,71 @@ class TestRateLimitBackoff:
 
         assert result is False
         assert any(record.levelno >= logging.ERROR for record in caplog.records)
+
+
+class TestLastRateLimitRetryAfter:
+    """last_rate_limit_retry_after lets a caller tell "this failed because
+    of rate limiting, retry after N seconds" apart from any other kind of
+    failure, without changing what any existing call returns.
+    """
+
+    async def test_none_before_any_call(self, manager):
+        assert manager.last_rate_limit_retry_after is None
+
+    async def test_set_when_a_429_is_observed_even_if_eventually_retried_successfully(
+        self, manager, mock_sleep
+    ):
+        url = BASE_URL + "service/cubic/secure/cubic-1/measurement/0"
+
+        with aioresponses() as m:
+            m.get(url, status=429, headers={"Retry-After": "7"})
+            m.get(url, payload={"flow": 0.0}, status=200)
+            async with manager:
+                result = await manager.get_cubic_secure_measurement("cubic-1")
+
+        assert result is True
+        assert manager.last_rate_limit_retry_after == 7.0
+
+    async def test_set_when_retries_are_exhausted(self, manager, mock_sleep):
+        manager.userid = "user-123"
+        url = BASE_URL + "service/users/user/user-123/structure/1"
+
+        with aioresponses() as m:
+            m.get(url, status=429, headers={"Retry-After": "42"}, repeat=True)
+            async with manager:
+                await manager.get_user_structure()
+
+        assert manager.last_rate_limit_retry_after == 42.0
+
+    async def test_none_after_a_non_429_failure(self, manager):
+        manager.userid = "user-123"
+        url = BASE_URL + "service/users/user/user-123/structure/1"
+
+        with aioresponses() as m:
+            m.get(url, status=500)
+            async with manager:
+                await manager.get_user_structure()
+
+        assert manager.last_rate_limit_retry_after is None
+
+    async def test_reset_to_none_at_the_start_of_the_next_call(self, manager, mock_sleep):
+        """A stale value from a previous failed call must not look like
+        it describes the current one."""
+        manager.userid = "user-123"
+        url = BASE_URL + "service/users/user/user-123/structure/1"
+
+        with aioresponses() as m:
+            m.get(url, status=429, headers={"Retry-After": "5"}, repeat=True)
+            async with manager:
+                await manager.get_user_structure()
+        assert manager.last_rate_limit_retry_after == 5.0
+
+        with aioresponses() as m:
+            m.get(url, payload=[], status=200)
+            async with manager:
+                await manager.get_user_structure()
+
+        assert manager.last_rate_limit_retry_after is None
 
 
 class TestSharedRateLimitCooldown:

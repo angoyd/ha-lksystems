@@ -7,10 +7,19 @@ by hand - it uses whichever duration is currently set on the device's
 
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import patch
+
+from homeassistant.const import EntityCategory
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
-from custom_components.lksystems.const import DEFAULT_PAUSE_LEAK_DETECTION_SECONDS, DOMAIN
+from custom_components.lksystems.const import (
+    DEFAULT_PAUSE_LEAK_DETECTION_SECONDS,
+    DOMAIN,
+    LK_CUBICSECURE_THRESHOLD_FACTORY_DEFAULTS,
+)
+from custom_components.lksystems.threshold_writes import LKThresholdWriteCoordinator
 
 from .conftest import (
     CUBIC_IDENTITY,
@@ -22,6 +31,10 @@ from .conftest import (
     setup_entry,
 )
 
+TINY_TIMING = patch.multiple(
+    LKThresholdWriteCoordinator, DEBOUNCE_SECONDS=0.01, FALLBACK_RETRY_SECONDS=0.01
+)
+
 
 def _button_unique_id(device_identity: str) -> str:
     return f"LkUid_pause_leak_detection_{device_identity}"
@@ -29,6 +42,10 @@ def _button_unique_id(device_identity: str) -> str:
 
 def _resume_button_unique_id(device_identity: str) -> str:
     return f"LkUid_resume_leak_detection_{device_identity}"
+
+
+def _reset_thresholds_button_unique_id(device_identity: str) -> str:
+    return f"LkUid_reset_thresholds_to_defaults_{device_identity}"
 
 
 async def test_belongs_to_the_cubic_secure_device(hass, fake_manager):
@@ -213,3 +230,101 @@ async def test_resume_button_available_once_a_pause_is_active(hass, fake_manager
         )
 
     assert hass.states.get(resume_button_entity_id).state != "unavailable"
+
+
+class TestResetThresholdsToDefaultsButton:
+    """Resets every leak-detection/pressure-test threshold to its factory
+    default - see LK_CUBICSECURE_THRESHOLD_FACTORY_DEFAULTS's own comment
+    in const.py for how those values were confirmed against a real
+    device's own "reset to factory defaults" action.
+    """
+
+    async def test_belongs_to_the_cubic_secure_device(self, hass, fake_manager):
+        await setup_entry(hass, fake_manager)
+        button_entity_id = entity_id(
+            hass, "button", _reset_thresholds_button_unique_id(CUBIC_IDENTITY)
+        )
+
+        device = dr.async_get(hass).async_get_device(
+            identifiers={(DOMAIN, CUBIC_IDENTITY)}
+        )
+        entry = er.async_get(hass).async_get(button_entity_id)
+
+        assert entry.device_id == device.id
+
+    async def test_is_a_configuration_entity(self, hass, fake_manager):
+        await setup_entry(hass, fake_manager)
+        entry = er.async_get(hass).async_get(
+            entity_id(hass, "button", _reset_thresholds_button_unique_id(CUBIC_IDENTITY))
+        )
+
+        assert entry.entity_category is EntityCategory.CONFIG
+
+    async def test_press_writes_every_field_to_its_factory_default(
+        self, hass, fake_manager
+    ):
+        await setup_entry(hass, fake_manager)
+        button_entity_id = entity_id(
+            hass, "button", _reset_thresholds_button_unique_id(CUBIC_IDENTITY)
+        )
+
+        with patch_all_managers(fake_manager):
+            await hass.services.async_call(
+                "button", "press", {"entity_id": button_entity_id}, blocking=True
+            )
+
+        sent = next(
+            c[2] for c in fake_manager.calls if c[0] == "cubic_secure_set_thresholds"
+        )
+        assert sent == LK_CUBICSECURE_THRESHOLD_FACTORY_DEFAULTS
+
+    async def test_press_updates_other_threshold_entities_immediately(
+        self, hass, fake_manager
+    ):
+        """Regression test: this button changes six fields at once, none
+        of which is "the entity HA just serviced" - unlike a single
+        number's own set_value, nothing here relies on HA's post-service
+        auto-refresh of the button itself to make the change visible.
+        The other five threshold entities need an explicit coordinator
+        listener notification after the confirmation read, or they'd only
+        pick this up on the next regular poll.
+        """
+        await setup_entry(hass, fake_manager)
+        button_entity_id = entity_id(
+            hass, "button", _reset_thresholds_button_unique_id(CUBIC_IDENTITY)
+        )
+        # The fixture's default (10.0) deliberately differs from the
+        # factory default (15.0), so a stale read would be caught.
+        medium_threshold_entity_id = entity_id(
+            hass, "number", f"LkUid_medium_leak_threshold_{CUBIC_IDENTITY}"
+        )
+
+        with patch_all_managers(fake_manager):
+            await hass.services.async_call(
+                "button", "press", {"entity_id": button_entity_id}, blocking=True
+            )
+
+        assert float(hass.states.get(medium_threshold_entity_id).state) == 15.0
+
+    async def test_becomes_unavailable_while_a_write_is_blocked_and_recovers(
+        self, hass, fake_manager
+    ):
+        """A one-shot control still shares the device's thresholds
+        endpoint, so a failed write blocks it (and every other entity on
+        that endpoint) exactly like a debounced number edit would."""
+        await setup_entry(hass, fake_manager)
+        button_entity_id = entity_id(
+            hass, "button", _reset_thresholds_button_unique_id(CUBIC_IDENTITY)
+        )
+        fake_manager.cubic_secure_set_thresholds_result = False
+
+        with TINY_TIMING, patch_all_managers(fake_manager):
+            await hass.services.async_call(
+                "button", "press", {"entity_id": button_entity_id}, blocking=True
+            )
+            assert hass.states.get(button_entity_id).state == "unavailable"
+
+            fake_manager.cubic_secure_set_thresholds_result = True
+            await asyncio.sleep(0.05)
+
+        assert hass.states.get(button_entity_id).state != "unavailable"

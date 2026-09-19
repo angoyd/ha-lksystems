@@ -19,7 +19,11 @@ def _issue_id(kind: str, entry_id: str) -> str:
 
 
 def _create_issue(
-    hass: HomeAssistant, entry_id: str, kind: str, severity: ir.IssueSeverity
+    hass: HomeAssistant,
+    entry_id: str,
+    kind: str,
+    severity: ir.IssueSeverity,
+    translation_key: str | None = None,
 ) -> None:
     ir.async_create_issue(
         hass,
@@ -27,7 +31,7 @@ def _create_issue(
         _issue_id(kind, entry_id),
         is_fixable=False,
         severity=severity,
-        translation_key=kind,
+        translation_key=translation_key or kind,
     )
 
 
@@ -59,6 +63,32 @@ def async_clear_persistent_update_failure_issue(
 ) -> None:
     """Clear the persistent-update-failure repair issue, if any."""
     _clear_issue(hass, entry_id, "persistent_update_failure")
+
+
+def async_create_threshold_write_failed_issue(
+    hass: HomeAssistant, entry_id: str, device_identity: str
+) -> None:
+    """Raise a repair issue for a threshold/schedule write that kept
+    failing until its retries were exhausted and the edit was discarded.
+
+    Scoped per device (not just per entry_id, unlike the other issue
+    kinds here) since an account can have more than one Cubic Secure
+    device, each writing independently.
+    """
+    _create_issue(
+        hass,
+        entry_id,
+        f"threshold_write_failed_{device_identity}",
+        ir.IssueSeverity.WARNING,
+        translation_key="threshold_write_failed",
+    )
+
+
+def async_clear_threshold_write_failed_issue(
+    hass: HomeAssistant, entry_id: str, device_identity: str
+) -> None:
+    """Clear the threshold-write-failed repair issue for one device, if any."""
+    _clear_issue(hass, entry_id, f"threshold_write_failed_{device_identity}")
 
 
 def async_clear_all_issues(hass: HomeAssistant, entry_id: str) -> None:

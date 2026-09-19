@@ -83,6 +83,7 @@ class FakeLKSystemsManager:
         self.jwt_token = None
         self.refresh_token = None
         self.userid = None
+        self.last_rate_limit_retry_after: float | None = None
 
         self.user_structure: list[dict] = []
         self.device_measurements: dict = {}
@@ -119,6 +120,7 @@ class FakeLKSystemsManager:
         self.get_hub_devices_result = True
         self.get_cubic_secure_measurement_result = True
         self.get_cubic_secure_configuration_result = True
+        self.cubic_secure_set_thresholds_result = True
         # Simulates a real fetch taking a while - e.g. pylksystems
         # honoring a long Retry-After from LK's own rate limiter, which
         # can take tens of seconds on a real device (confirmed live).
@@ -241,6 +243,14 @@ class FakeLKSystemsManager:
 
     async def cubic_secure_set_thresholds(self, cubic_identity, thresholds):
         self.calls.append(("cubic_secure_set_thresholds", cubic_identity, thresholds))
+        if self.cubic_secure_set_thresholds_result:
+            current = self.cubic_configurations_by_device.get(
+                cubic_identity, self.cubic_configuration_data
+            )
+            updated = {**current, "thresholds": thresholds}
+            self.cubic_configurations_by_device[cubic_identity] = updated
+            self.cubic_configurations_cached_by_device[cubic_identity] = updated
+        return self.cubic_secure_set_thresholds_result
 
 
 # --- Sample device identities used across tests ---------------------------
@@ -518,13 +528,56 @@ def build_cubic_measurement(volume_total: int = 45000) -> dict:
     }
 
 
-def build_cubic_configuration(valve_state: str = "open", mute_leak: int = 0) -> dict:
+def build_thresholds(
+    *,
+    pressure_sensitivity: float = 0.3,
+    pressure_duration: int = 45,
+    pressure_close_delay: int = 255600,
+    pressure_notification_delay: int = 169200,
+    medium_leak_threshold: float = 10.0,
+    medium_leak_close_delay: int = 1800,
+    medium_leak_notification_delay: int = 1800,
+    large_leak_threshold: float = 1500.0,
+    large_leak_close_delay: int = 90,
+    large_leak_notification_delay: int = 90,
+) -> dict:
+    """A realistic thresholds object - values confirmed against a real
+    Cubic Secure account's diagnostics. Medium-leak deliberately doesn't
+    match set_thresholds' old hardcoded literal defaults (5.0/2700/2700)
+    - it's what the account actually had configured, most likely via the
+    app, distinct from whatever a never-successfully-called service might
+    have written.
+    """
+    return {
+        "pressure": {
+            "sensitivity": pressure_sensitivity,
+            "duration": pressure_duration,
+            "closeDelay": pressure_close_delay,
+            "notificationDelay": pressure_notification_delay,
+        },
+        "leakMedium": {
+            "threshold": medium_leak_threshold,
+            "closeDelay": medium_leak_close_delay,
+            "notificationDelay": medium_leak_notification_delay,
+        },
+        "leakLarge": {
+            "threshold": large_leak_threshold,
+            "closeDelay": large_leak_close_delay,
+            "notificationDelay": large_leak_notification_delay,
+        },
+    }
+
+
+def build_cubic_configuration(
+    valve_state: str = "open", mute_leak: int = 0, thresholds: dict | None = None
+) -> dict:
     return {
         "cacheUpdated": int(time.time()),
         "valveState": valve_state,
         "firmwareVersion": "1.2.3",
         "hardwareVersion": 4,
         "muteLeak": mute_leak,
+        "thresholds": thresholds if thresholds is not None else build_thresholds(),
     }
 
 

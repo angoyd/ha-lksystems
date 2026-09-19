@@ -2,24 +2,32 @@
 
 from __future__ import annotations
 
-import logging
-
-from homeassistant.components.number import NumberDeviceClass, NumberMode, RestoreNumber
+from homeassistant.components.number import (
+    NumberDeviceClass,
+    NumberEntity,
+    NumberMode,
+    RestoreNumber,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util.unit_conversion import DurationConverter
 
-from . import CubicSecureEntityMixin, LKSystemCoordinator, cubic_secure_device_identities
+from . import (
+    CubicSecureEntityMixin,
+    LKSystemCoordinator,
+    cubic_secure_device_identities,
+)
 from .const import (
     DEFAULT_PAUSE_LEAK_DETECTION_SECONDS,
     DOMAIN,
+    LK_CUBICSECURE_THRESHOLD_NUMBERS,
     PAUSE_LEAK_DETECTION_MAX_SECONDS,
     PAUSE_LEAK_DETECTION_MIN_SECONDS,
+    LKThresholdNumberDescription,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 
 def _minutes(seconds: float) -> float:
@@ -32,11 +40,18 @@ async def async_setup_entry(
 ) -> None:
     """Set up LK Systems number entities based on a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
+    device_identities = list(cubic_secure_device_identities(coordinator))
 
-    async_add_entities(
+    entities: list[NumberEntity] = [
         LKPauseLeakDetectionDurationNumber(coordinator, device_identity)
-        for device_identity in cubic_secure_device_identities(coordinator)
+        for device_identity in device_identities
+    ]
+    entities.extend(
+        LKThresholdNumber(coordinator, device_identity, description)
+        for device_identity in device_identities
+        for description in LK_CUBICSECURE_THRESHOLD_NUMBERS.values()
     )
+    async_add_entities(entities)
 
 
 class LKPauseLeakDetectionDurationNumber(CubicSecureEntityMixin, RestoreNumber):
@@ -110,3 +125,84 @@ class LKPauseLeakDetectionDurationNumber(CubicSecureEntityMixin, RestoreNumber):
         """Update the configured duration."""
         self._store_duration_minutes(value)
         self.async_write_ha_state()
+
+
+class LKThresholdNumber(CubicSecureEntityMixin, CoordinatorEntity[LKSystemCoordinator], NumberEntity):
+    """One leak-detection threshold - see LKThresholdNumberDescription's
+    own docstring for the category/fields/unit-conversion it carries.
+
+    Reflects the live coordinator value (like the sibling sensors and the
+    valve), so it picks up a change from any source - a scheduled poll,
+    or the threshold being changed from the vendor app - not just its own
+    writes. An edit doesn't write immediately: it's staged on this
+    device's shared LKThresholdWriteCoordinator, which debounces several
+    edits into one write and holds/retries a failed one - see that
+    class's own docstring. native_value reads through
+    effective_thresholds() rather than the coordinator's own cached
+    value, so a pending or held edit displays immediately instead of
+    waiting for (or reverting to) the real API state.
+    """
+
+    _attr_mode = NumberMode.BOX
+    entity_description: LKThresholdNumberDescription
+
+    def __init__(
+        self,
+        coordinator: LKSystemCoordinator,
+        device_identity: str,
+        description: LKThresholdNumberDescription,
+    ) -> None:
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._device_identity = device_identity
+        self.entity_description = description
+        self._attr_unique_id = f"LkUid_{description.key}_{device_identity}"
+        self._write_coordinator = coordinator.get_threshold_write_coordinator(
+            device_identity
+        )
+
+    @property
+    def available(self) -> bool:
+        """Unavailable while this device's shared endpoint is blocked
+        retrying a failed write - see LKThresholdWriteCoordinator."""
+        return super().available and not self._write_coordinator.is_blocked
+
+    def _to_native_unit(self, api_value: float) -> float:
+        """Convert one value from the API's own unit to this entity's
+        displayed unit - a no-op unless the description names a
+        different api_unit_of_measurement (see its own docstring)."""
+        api_unit = self.entity_description.api_unit_of_measurement
+        if api_unit is None:
+            return api_value
+        return DurationConverter.convert(
+            api_value, api_unit, self.entity_description.native_unit_of_measurement
+        )
+
+    def _to_api_unit(self, native_value: float) -> float:
+        """The inverse of _to_native_unit - see its own docstring."""
+        api_unit = self.entity_description.api_unit_of_measurement
+        if api_unit is None:
+            return native_value
+        return DurationConverter.convert(
+            native_value, self.entity_description.native_unit_of_measurement, api_unit
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the currently configured (or pending/held) value."""
+        raw_value = self._current_category().get(self.entity_description.fields[0])
+        if raw_value is None:
+            return None
+        return self._to_native_unit(raw_value)
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Stage this threshold change, carrying over every other current
+        value once it's actually written."""
+        raw_value = self._to_api_unit(value)
+        overrides = {field: raw_value for field in self.entity_description.fields}
+        self._write_coordinator.stage(self.entity_description.category, overrides)
+        self.async_write_ha_state()
+
+    def _current_category(self) -> dict:
+        category = self.entity_description.category
+        return self._write_coordinator.effective_thresholds().get(category) or {}
