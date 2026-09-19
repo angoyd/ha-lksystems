@@ -70,6 +70,7 @@ CONSECUTIVE_FAILURE_THRESHOLD = 3
 # Define the platforms we support
 PLATFORMS = [
     Platform.SENSOR,
+    Platform.BINARY_SENSOR,
     Platform.CLIMATE,
     Platform.NUMBER,
     Platform.BUTTON,
