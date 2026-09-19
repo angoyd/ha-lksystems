@@ -1,4 +1,4 @@
-"""Tests for switch.py: the "Prevent Valve Closing" switch.
+"""Tests for switch.py: the "Micro Leak Valve Prevention" switch.
 
 Confirmed empirically against a real device (a before/after diagnostics
 diff around toggling the app's own "prevent valve closing" control): it

@@ -51,7 +51,7 @@ class LKPreventValveClosingSwitch(
     thresholds endpoint.
     """
 
-    _attr_name = "Prevent Valve Closing"
+    _attr_name = "Micro Leak Valve Prevention"
     _attr_icon = "mdi:valve-open"
     _attr_entity_category = EntityCategory.CONFIG
 

@@ -1,8 +1,8 @@
 """Debounced, retry-aware writes shared by every entity that writes to
 one Cubic Secure device's thresholds endpoint.
 
-The six threshold numbers, the Prevent Valve Closing switch, and the
-Reset Thresholds To Defaults button all write to the same underlying
+The six threshold numbers, the Micro Leak Valve Prevention switch, and
+the Reset Thresholds To Defaults button all write to the same underlying
 object at the same endpoint, so editing several of them in a burst
 should produce one write, not several - and a failure on that endpoint
 (most often rate-limiting) affects all of them, not just whichever one
