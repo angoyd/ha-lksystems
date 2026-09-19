@@ -1,6 +1,7 @@
 {
   "domain": "lksystems",
   "name": "LK Systems",
+  "after_dependencies": ["logbook"],
   "codeowners": [
     "@angoyd"
   ],
@@ -16,4 +17,3 @@
   "version": "0.4.4",
   "zeroconf": []
 }
-
