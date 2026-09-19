@@ -57,7 +57,7 @@ class LKThresholdWriteCoordinator:
       listens through, so no separate registration is needed here.
     """
 
-    DEBOUNCE_SECONDS = 8
+    DEBOUNCE_SECONDS = 5
     FALLBACK_RETRY_SECONDS = 30
     MAX_RETRY_ATTEMPTS = 3
 

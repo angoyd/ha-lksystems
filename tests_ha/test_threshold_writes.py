@@ -2,7 +2,7 @@
 
 DEBOUNCE_SECONDS/FALLBACK_RETRY_SECONDS are patched down to a few
 milliseconds throughout so these tests can wait out a real timer instead
-of taking the production 8s/30s - see tiny_valve_retry_timings() in
+of taking the production 5s/30s - see tiny_valve_retry_timings() in
 conftest.py for the established reason simulated-time helpers
 (async_fire_time_changed) can't drive this kind of test.
 """
