@@ -66,11 +66,14 @@ def _rate_limit_backoff(response) -> float:
 # A 429's Retry-After is server truth, not any one caller's to own - every
 # LKSystemsManager instance in the process constructs its own session, so
 # this cooldown deadline is deliberately module-level rather than an
-# instance attribute. Keyed per endpoint path rather than one global bucket:
-# Azure APIM rate-limit policies are typically scoped per operation, and
-# every 429 observed so far has landed on one specific endpoint, none on
-# others - a single global cooldown would block unrelated endpoints for no
-# reason.
+# instance attribute. Module-level (not per-user) is also the right shape
+# for what LK Systems confirmed directly: the limit is keyed by source IP,
+# not by subscription key, so one process's shared state accurately
+# mirrors the server's own per-IP tracking rather than approximating it.
+# Keyed per endpoint path rather than one global bucket: LK also confirmed
+# not every endpoint carries the same limit, matching every 429 observed so
+# far landing on one specific endpoint, none on others - a single global
+# cooldown would block unrelated endpoints for no reason.
 _rate_limited_until: dict[str, datetime] = {}
 
 
