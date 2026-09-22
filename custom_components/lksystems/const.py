@@ -359,7 +359,7 @@ LK_CUBICSECURE_THRESHOLD_NUMBERS: dict[str, LKThresholdNumberDescription] = {
     ),
     "pressure_sensitivity": LKThresholdNumberDescription(
         key="pressure_sensitivity",
-        name="Automatic Pressure Test Sensitivity",
+        name="Micro Leak Sensitivity",
         category="pressure",
         fields=("sensitivity",),
         native_min_value=0.2,
@@ -370,7 +370,7 @@ LK_CUBICSECURE_THRESHOLD_NUMBERS: dict[str, LKThresholdNumberDescription] = {
     ),
     "pressure_duration": LKThresholdNumberDescription(
         key="pressure_duration",
-        name="Automatic Pressure Test Duration",
+        name="Micro Leak Duration",
         category="pressure",
         fields=("duration",),
         native_min_value=45,

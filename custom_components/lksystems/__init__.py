@@ -70,6 +70,7 @@ CONSECUTIVE_FAILURE_THRESHOLD = 3
 # Define the platforms we support
 PLATFORMS = [
     Platform.SENSOR,
+    Platform.BINARY_SENSOR,
     Platform.CLIMATE,
     Platform.NUMBER,
     Platform.BUTTON,
@@ -326,6 +327,11 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         # _schedule_valve_state_confirmation() call, if any - see that
         # method's own docstring.
         self._valve_action_unsub: dict[str, CALLBACK_TYPE] = {}
+
+        # One shared LKThresholdWriteCoordinator per device, created
+        # lazily the first time any entity needs it - see
+        # get_threshold_write_coordinator()'s own docstring.
+        self._threshold_write_coordinators: dict[str, "LKThresholdWriteCoordinator"] = {}
 
         # Whether a device is currently mid-open/close, per device
         # identity - True while closing, False while opening, absent once
@@ -817,6 +823,31 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             self._cancel_leak_detection_expiry_refresh(device_identity)
         for device_identity in list(self._valve_action_unsub):
             self._cancel_valve_action_confirmation(device_identity)
+        for write_coordinator in self._threshold_write_coordinators.values():
+            write_coordinator.async_shutdown()
+
+    def get_threshold_write_coordinator(
+        self, device_identity: str
+    ) -> "LKThresholdWriteCoordinator":
+        """Return this device's shared debounced-write coordinator,
+        creating it the first time any entity asks for it.
+
+        Shared by every entity that writes to the same thresholds
+        endpoint for this device (the six threshold numbers, the Prevent
+        Valve Closing switch, and the Reset Thresholds To Defaults
+        button) - see LKThresholdWriteCoordinator's own docstring.
+        """
+        if device_identity not in self._threshold_write_coordinators:
+            # Deferred to avoid a circular import: threshold_writes.py
+            # needs LKSystemCoordinator's own type for its constructor's
+            # type hint, so a top-level import here would try to read
+            # this class off this module before it's finished executing.
+            from .threshold_writes import LKThresholdWriteCoordinator
+
+            self._threshold_write_coordinators[device_identity] = (
+                LKThresholdWriteCoordinator(self.hass, self, device_identity)
+            )
+        return self._threshold_write_coordinators[device_identity]
 
     async def _apply_cubic_secure_configuration(
         self, lk_inst: LKSystemsManager, device_identity: str, *, force_update: bool

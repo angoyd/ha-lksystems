@@ -28,8 +28,6 @@ from .const import (
     PAUSE_LEAK_DETECTION_MIN_SECONDS,
     LKThresholdNumberDescription,
 )
-from .pylksystems import thresholds_with_overrides
-from .services import set_thresholds_for_serial
 
 
 def _minutes(seconds: float) -> float:
@@ -136,10 +134,13 @@ class LKThresholdNumber(CubicSecureEntityMixin, CoordinatorEntity[LKSystemCoordi
     Reflects the live coordinator value (like the sibling sensors and the
     valve), so it picks up a change from any source - a scheduled poll,
     or the threshold being changed from the vendor app - not just its own
-    writes. Writing is a full-object POST (see
-    services.set_thresholds_for_serial's own docstring), so every write
-    here starts from the device's current thresholds and only overrides
-    this entity's own field(s), never touching anything else configured.
+    writes. An edit doesn't write immediately: it's staged on this
+    device's shared LKThresholdWriteCoordinator, which debounces several
+    edits into one write and holds/retries a failed one - see that
+    class's own docstring. native_value reads through
+    effective_thresholds() rather than the coordinator's own cached
+    value, so a pending or held edit displays immediately instead of
+    waiting for (or reverting to) the real API state.
     """
 
     _attr_mode = NumberMode.BOX
@@ -156,6 +157,15 @@ class LKThresholdNumber(CubicSecureEntityMixin, CoordinatorEntity[LKSystemCoordi
         self._device_identity = device_identity
         self.entity_description = description
         self._attr_unique_id = f"LkUid_{description.key}_{device_identity}"
+        self._write_coordinator = coordinator.get_threshold_write_coordinator(
+            device_identity
+        )
+
+    @property
+    def available(self) -> bool:
+        """Unavailable while this device's shared endpoint is blocked
+        retrying a failed write - see LKThresholdWriteCoordinator."""
+        return super().available and not self._write_coordinator.is_blocked
 
     def _to_native_unit(self, api_value: float) -> float:
         """Convert one value from the API's own unit to this entity's
@@ -179,22 +189,20 @@ class LKThresholdNumber(CubicSecureEntityMixin, CoordinatorEntity[LKSystemCoordi
 
     @property
     def native_value(self) -> float | None:
-        """Return the currently configured value."""
+        """Return the currently configured (or pending/held) value."""
         raw_value = self._current_category().get(self.entity_description.fields[0])
         if raw_value is None:
             return None
         return self._to_native_unit(raw_value)
 
     async def async_set_native_value(self, value: float) -> None:
-        """Change this threshold, carrying over every other current value."""
+        """Stage this threshold change, carrying over every other current
+        value once it's actually written."""
         raw_value = self._to_api_unit(value)
         overrides = {field: raw_value for field in self.entity_description.fields}
-        updated = thresholds_with_overrides(
-            self._current_thresholds(), self.entity_description.category, overrides
-        )
-        await set_thresholds_for_serial(
-            self.hass, self.coordinator.entry, self._device_identity, updated
-        )
+        self._write_coordinator.stage(self.entity_description.category, overrides)
+        self.async_write_ha_state()
 
     def _current_category(self) -> dict:
-        return self._current_thresholds().get(self.entity_description.category) or {}
+        category = self.entity_description.category
+        return self._write_coordinator.effective_thresholds().get(category) or {}

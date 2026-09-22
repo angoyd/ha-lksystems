@@ -262,7 +262,8 @@ class TestSetThresholdsForSerial:
                 hass, entry, CUBIC_IDENTITY, thresholds
             )
 
-        assert result is True
+        assert result.success is True
+        assert result.retry_after is None
         assert (
             "cubic_secure_set_thresholds",
             CUBIC_IDENTITY,
@@ -280,10 +281,26 @@ class TestSetThresholdsForSerial:
                 hass, entry, CUBIC_IDENTITY, build_thresholds()
             )
 
-        assert result is False
+        assert result.success is False
+        assert result.retry_after is None
         assert not any(
             c[0] == "cubic_secure_set_thresholds" for c in fake_manager.calls
         )
+
+    async def test_rate_limited_failure_surfaces_the_retry_after(
+        self, hass, fake_manager
+    ):
+        entry, _ = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+        fake_manager.cubic_secure_set_thresholds_result = False
+        fake_manager.last_rate_limit_retry_after = 42.0
+
+        with patch_all_managers(fake_manager):
+            result = await set_thresholds_for_serial(
+                hass, entry, CUBIC_IDENTITY, build_thresholds()
+            )
+
+        assert result.success is False
+        assert result.retry_after == 42.0
 
     async def test_reuses_one_session_for_the_write_and_its_confirmation_read(
         self, hass, fake_manager

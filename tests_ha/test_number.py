@@ -11,6 +11,9 @@ seconds, matching the API's own "pause for N seconds" contract.
 
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import patch
+
 import pytest
 from homeassistant.const import EntityCategory
 from homeassistant.core import State
@@ -25,6 +28,7 @@ from custom_components.lksystems.const import (
     PAUSE_LEAK_DETECTION_MAX_SECONDS,
     PAUSE_LEAK_DETECTION_MIN_SECONDS,
 )
+from custom_components.lksystems.threshold_writes import LKThresholdWriteCoordinator
 
 from .conftest import (
     CUBIC_IDENTITY,
@@ -37,6 +41,10 @@ from .conftest import (
 )
 
 SECONDS_PER_MINUTE = 60
+TINY_DEBOUNCE = patch.object(LKThresholdWriteCoordinator, "DEBOUNCE_SECONDS", 0.01)
+TINY_TIMING = patch.multiple(
+    LKThresholdWriteCoordinator, DEBOUNCE_SECONDS=0.01, FALLBACK_RETRY_SECONDS=0.01
+)
 
 
 async def test_defaults_to_the_service_default(hass, fake_manager):
@@ -268,13 +276,14 @@ class TestLeakDetectionThresholdNumbers:
             hass, "number", f"LkUid_large_leak_threshold_{CUBIC_IDENTITY}"
         )
 
-        with patch_all_managers(fake_manager):
+        with TINY_DEBOUNCE, patch_all_managers(fake_manager):
             await hass.services.async_call(
                 "number",
                 "set_value",
                 {"entity_id": large_leak_threshold_id, "value": 2000},
                 blocking=True,
             )
+            await asyncio.sleep(0.05)
 
         threshold_calls = [
             c for c in fake_manager.calls if c[0] == "cubic_secure_set_thresholds"
@@ -294,13 +303,14 @@ class TestLeakDetectionThresholdNumbers:
             hass, "number", f"LkUid_large_leak_delay_{CUBIC_IDENTITY}"
         )
 
-        with patch_all_managers(fake_manager):
+        with TINY_DEBOUNCE, patch_all_managers(fake_manager):
             await hass.services.async_call(
                 "number",
                 "set_value",
                 {"entity_id": large_leak_delay_id, "value": 60},
                 blocking=True,
             )
+            await asyncio.sleep(0.05)
 
         sent = next(
             c[2] for c in fake_manager.calls if c[0] == "cubic_secure_set_thresholds"
@@ -310,6 +320,63 @@ class TestLeakDetectionThresholdNumbers:
         assert sent == build_thresholds(
             large_leak_close_delay=60, large_leak_notification_delay=60
         )
+
+    async def test_edit_displays_immediately_before_the_debounced_write(
+        self, hass, fake_manager
+    ):
+        """Typing a new value should show up right away - the point of
+        staging on the shared write coordinator rather than writing (and
+        waiting on the API) on every keystroke."""
+        await setup_entry(hass, fake_manager)
+        large_leak_threshold_id = entity_id(
+            hass, "number", f"LkUid_large_leak_threshold_{CUBIC_IDENTITY}"
+        )
+
+        with patch_all_managers(fake_manager):
+            await hass.services.async_call(
+                "number",
+                "set_value",
+                {"entity_id": large_leak_threshold_id, "value": 2000},
+                blocking=True,
+            )
+
+        assert float(hass.states.get(large_leak_threshold_id).state) == 2000.0
+        assert not any(
+            c[0] == "cubic_secure_set_thresholds" for c in fake_manager.calls
+        )
+
+    async def test_becomes_unavailable_while_a_write_is_blocked_and_recovers(
+        self, hass, fake_manager
+    ):
+        """A failure on the shared thresholds endpoint should be visible
+        on every entity that writes to it, not just the one that
+        triggered it - confirmed here for a second, unrelated field."""
+        await setup_entry(hass, fake_manager)
+        large_leak_threshold_id = entity_id(
+            hass, "number", f"LkUid_large_leak_threshold_{CUBIC_IDENTITY}"
+        )
+        medium_leak_threshold_id = entity_id(
+            hass, "number", f"LkUid_medium_leak_threshold_{CUBIC_IDENTITY}"
+        )
+        fake_manager.cubic_secure_set_thresholds_result = False
+
+        with TINY_TIMING, patch_all_managers(fake_manager):
+            await hass.services.async_call(
+                "number",
+                "set_value",
+                {"entity_id": large_leak_threshold_id, "value": 2000},
+                blocking=True,
+            )
+            await asyncio.sleep(0.02)
+
+            assert hass.states.get(large_leak_threshold_id).state == "unavailable"
+            assert hass.states.get(medium_leak_threshold_id).state == "unavailable"
+
+            fake_manager.cubic_secure_set_thresholds_result = True
+            await asyncio.sleep(0.05)
+
+        assert hass.states.get(large_leak_threshold_id).state != "unavailable"
+        assert hass.states.get(medium_leak_threshold_id).state != "unavailable"
 
     @pytest.mark.parametrize(
         ("key", "native_min_value", "native_max_value", "native_step"),
