@@ -10,7 +10,6 @@ import asyncio
 import base64
 import json
 from typing import Any, Dict
-import time
 
 # Make sure jwt is installed using: pip install pyjwt
 try:
@@ -75,6 +74,7 @@ PLATFORMS = [
     Platform.NUMBER,
     Platform.BUTTON,
     Platform.VALVE,
+    Platform.SWITCH,
 ]
 
 
@@ -442,7 +442,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                     self._apply_device_measurement(
                         device_id, lk_inst.device_measurements[device_id]
                     )
-                    self.async_set_updated_data(self.data)
+                    self._publish_updated_data()
 
                 return success
 
@@ -736,13 +736,15 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             # for longer than VALVE_ACTION_MAX_RETRY_SECONDS. Wrong only
             # if the write itself failed downstream of a successful API
             # call, in which case the next regular poll corrects it.
-            self.data["cubic_devices"][device_identity]["configuration"][
-                "valveState"
-            ] = (
-                CUBIC_SECURE_VALVE_STATE_CLOSED
-                if expect_closed
-                else CUBIC_SECURE_VALVE_STATE_OPEN
+            configuration = self.data["cubic_devices"][device_identity].get(
+                "configuration"
             )
+            if configuration is not None:
+                configuration["valveState"] = (
+                    CUBIC_SECURE_VALVE_STATE_CLOSED
+                    if expect_closed
+                    else CUBIC_SECURE_VALVE_STATE_OPEN
+                )
             self._resolve_valve_action(device_identity)
             _LOGGER.debug(
                 "Giving up on confirming valve %s reached the requested "
@@ -848,9 +850,27 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             # and the leak-detection expiry check
             # (_schedule_leak_detection_expiry_refresh) only ever calls
             # this at or after a pause's own target end time.
-            self.async_set_updated_data(self.data)
+            self._publish_updated_data()
 
         return success
+
+    def _schedule_timestamps(self, reference_time: datetime) -> dict[str, str]:
+        """Return the update_time/next_update_time pair for a fetch (or
+        manual push) that happened at reference_time."""
+        return {
+            "update_time": reference_time.isoformat(),
+            "next_update_time": (reference_time + self.update_interval).isoformat(),
+        }
+
+    def _publish_updated_data(self) -> None:
+        """Notify listeners of a manual data update, refreshing
+        next_update_time/update_time to match the schedule reset
+        async_set_updated_data() performs (see its own docstring) - or a
+        countdown built on next_update_time (sensor.py's Next Update In)
+        would freeze until the rescheduled poll actually happens.
+        """
+        self.data.update(self._schedule_timestamps(dt_util.now()))
+        self.async_set_updated_data(self.data)
 
     async def _update_cubic_secure_configuration(
         self, device_identity: str, *, force_update: bool
@@ -970,7 +990,10 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         explicitly requested for it via async_request_forced_refresh()."""
         if device_identity in forced_device_ids:
             return True
-        return int(time.time()) - cache_updated > self.update_interval.total_seconds()
+        return (
+            int(dt_util.utcnow().timestamp()) - cache_updated
+            > self.update_interval.total_seconds()
+        )
 
     async def _fetch_data(self) -> LkStructureResp:  # noqa: C901
         """Fetch the latest data from the source."""
@@ -1046,10 +1069,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                     "cubic_devices": {},
                     "devices": [],
                     "device_details": {},  # Will store detailed information about each device
-                    "update_time": self._last_cloud_fetch_attempt.isoformat(),
-                    "next_update_time": (
-                        self._last_cloud_fetch_attempt + self.update_interval
-                    ).isoformat(),
+                    **self._schedule_timestamps(self._last_cloud_fetch_attempt),
                 }
 
                 # Extract devices from user structure
@@ -1419,6 +1439,15 @@ def cubic_secure_configuration(
     return cubic_device.get("configuration") or {}
 
 
+def cubic_secure_thresholds(
+    coordinator: LKSystemCoordinator, device_identity: str
+) -> dict[str, Any]:
+    """Return a Cubic Secure device's currently configured thresholds."""
+    return cubic_secure_configuration(coordinator, device_identity).get(
+        "thresholds"
+    ) or {}
+
+
 def cubic_secure_device_info(
     coordinator: LKSystemCoordinator, device_identity: str
 ) -> DeviceInfo:
@@ -1455,6 +1484,10 @@ class CubicSecureEntityMixin:
     def device_info(self) -> DeviceInfo:
         """Return the device_info of the device."""
         return cubic_secure_device_info(self.coordinator, self._device_identity)
+
+    def _current_thresholds(self) -> dict:
+        """Return this device's currently configured thresholds."""
+        return cubic_secure_thresholds(self.coordinator, self._device_identity)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:

@@ -22,11 +22,13 @@ from custom_components.lksystems.services import (
     close_valve_for_serial,
     open_valve_for_serial,
     pause_leak_detection_for_serial,
+    set_thresholds_for_serial,
 )
 
 from .conftest import (
     CUBIC_IDENTITY,
     build_cubic_configuration,
+    build_thresholds,
     entity_id,
     patch_all_managers,
     patch_services_manager,
@@ -247,6 +249,68 @@ class TestValveActionForSerial:
         ) in fake_manager.calls
 
 
+class TestSetThresholdsForSerial:
+    """Direct tests for set_thresholds_for_serial (see
+    TestValveActionForSerial's own docstring for why - same reasoning)."""
+
+    async def test_calls_the_client_with_the_given_thresholds(self, hass, fake_manager):
+        entry, _ = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+        thresholds = build_thresholds(large_leak_threshold=2000.0)
+
+        with patch_all_managers(fake_manager):
+            result = await set_thresholds_for_serial(
+                hass, entry, CUBIC_IDENTITY, thresholds
+            )
+
+        assert result is True
+        assert (
+            "cubic_secure_set_thresholds",
+            CUBIC_IDENTITY,
+            thresholds,
+        ) in fake_manager.calls
+
+    async def test_login_failure_returns_false_and_does_not_call_the_client(
+        self, hass, fake_manager
+    ):
+        entry, _ = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+        fake_manager.login_result = False
+
+        with patch_all_managers(fake_manager):
+            result = await set_thresholds_for_serial(
+                hass, entry, CUBIC_IDENTITY, build_thresholds()
+            )
+
+        assert result is False
+        assert not any(
+            c[0] == "cubic_secure_set_thresholds" for c in fake_manager.calls
+        )
+
+    async def test_reuses_one_session_for_the_write_and_its_confirmation_read(
+        self, hass, fake_manager
+    ):
+        """The write and its confirmation read share one session. Unlike
+        the valve's confirmation (get_cubic_secure_configuration(...,
+        force_update=True), bypassing the API's own cache to catch a
+        physical state change as soon as possible), thresholds are
+        server-side-tracked like muteLeak - the cached read already
+        reflects a write immediately, so this uses force_update=False,
+        matching refresh_cubic_secure_configuration()'s own docstring."""
+        entry, _ = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+        fake_manager.calls.clear()
+
+        with patch_all_managers(fake_manager):
+            await set_thresholds_for_serial(
+                hass, entry, CUBIC_IDENTITY, build_thresholds()
+            )
+
+        assert fake_manager.calls.count(("login",)) == 1
+        assert (
+            "get_cubic_secure_configuration",
+            CUBIC_IDENTITY,
+            False,
+        ) in fake_manager.calls
+
+
 async def test_set_pressure_test_schedule_calls_client(hass, fake_manager):
     _, device_entry = await _setup_entry_and_get_cubic_device(hass, fake_manager)
 
@@ -286,7 +350,14 @@ async def test_set_pressure_test_schedule_login_failure_does_not_raise(
     )
 
 
-async def test_set_thresholds_calls_client_with_defaults(hass, fake_manager):
+async def test_set_thresholds_falls_back_to_current_values(hass, fake_manager):
+    """Calling the service without every field used to reset the omitted
+    ones to hardcoded literal defaults, silently discarding whatever was
+    actually configured (e.g. via the app) - the fake account's
+    medium-leak threshold (10.0) doesn't match that old hardcoded default
+    (5.0), so this only passes if the omitted fields fall back to the
+    device's current values, not a literal.
+    """
     _, device_entry = await _setup_entry_and_get_cubic_device(hass, fake_manager)
 
     with patch_services_manager(fake_manager):
@@ -302,9 +373,27 @@ async def test_set_thresholds_calls_client_with_defaults(hass, fake_manager):
     ]
     assert len(threshold_calls) == 1
     assert threshold_calls[0][1] == CUBIC_IDENTITY
-    thresholds = threshold_calls[0][2]
-    assert thresholds["pressure"]["sensitivity"] == 0.3
-    assert thresholds["leakLarge"]["threshold"] == 1500.0
+    assert threshold_calls[0][2] == build_thresholds()
+
+
+async def test_set_thresholds_overrides_only_the_given_field(hass, fake_manager):
+    """A single explicitly-provided field changes, every other current
+    value is carried over unchanged - not reset to a default."""
+    _, device_entry = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+
+    with patch_services_manager(fake_manager):
+        await hass.services.async_call(
+            DOMAIN,
+            "set_thresholds",
+            {"device_id": device_entry.id, "large_leak_threshold": 2000.0},
+            blocking=True,
+        )
+
+    threshold_calls = [
+        c for c in fake_manager.calls if c[0] == "cubic_secure_set_thresholds"
+    ]
+    sent = threshold_calls[0][2]
+    assert sent == build_thresholds(large_leak_threshold=2000.0)
 
 
 async def test_set_thresholds_login_failure_does_not_raise(hass, fake_manager):
