@@ -33,6 +33,7 @@ from custom_components.lksystems import (
     LkCubicDeviceData,
     LKSystemCoordinator,
     LkStructureMachine,
+    cubic_secure_latest_pressure_test_report,
     is_token_valid,
 )
 from custom_components.lksystems.const import (
@@ -43,6 +44,9 @@ from custom_components.lksystems.const import (
     LEAK_DETECTION_EXPIRY_RETRY_INTERVAL_SECONDS,
     LEAK_DETECTION_LOCAL_WRITE_GRACE_SECONDS,
     PAUSE_LEAK_DETECTION_MIN_SECONDS,
+    PRESSURE_TEST_RESULT_INITIAL_DELAY_SECONDS,
+    PRESSURE_TEST_RESULT_MAX_RETRY_SECONDS,
+    PRESSURE_TEST_RESULT_RETRY_INTERVAL_SECONDS,
     VALVE_ACTION_MAX_RETRY_SECONDS,
     VALVE_ACTION_RETRY_INTERVAL_SECONDS,
 )
@@ -62,6 +66,7 @@ from .conftest import (
     THERMOSTAT_MAC_2,
     build_cubic_configuration,
     build_live_config_without_mute_leak,
+    build_pressure_test_report,
     get_issue,
     setup_entry,
     tiny_valve_retry_timings,
@@ -1799,3 +1804,260 @@ class TestSetThermostatTemperature:
 
         assert result is True
         assert ("login",) not in fake_manager.calls
+
+
+async def _coordinator_with_schedule(hass, fake_manager, hour, minute):
+    """Build a coordinator with an already-completed initial refresh and
+    the given pressure-test schedule configured, for the
+    pressure-test-result-check tests below - they all start from this
+    same state and only differ in what happens next."""
+    fake_manager.cubic_configuration_data = build_cubic_configuration(
+        pressure_test_schedule={"hour": hour, "minute": minute}
+    )
+    entry = _make_entry(hass)
+    coordinator = LKSystemCoordinator(hass, entry)
+    with _patch_manager(fake_manager):
+        data = await coordinator._async_update_data()
+    coordinator.async_set_updated_data(data)
+    return coordinator
+
+
+class TestPressureTestResultCheck:
+    """A scheduled pressure test's own configured time passing doesn't
+    itself cause anything to happen - nothing watches the clock for it -
+    so without this, the Micro Leak Last Test/Result sensors would just
+    sit on a stale value until the device's schedule happened to line up
+    with a regular poll. These poll shortly after the scheduled time,
+    retrying at PRESSURE_TEST_RESULT_RETRY_INTERVAL_SECONDS until a
+    report timestamped at or after the target actually shows up - a
+    scheduled test can be postponed and retried by the device itself, so
+    the first report seen isn't always the final one.
+    """
+
+    async def test_schedules_a_check_for_the_configured_time(
+        self, hass, fake_manager
+    ):
+        coordinator = await _coordinator_with_schedule(hass, fake_manager, 4, 0)
+
+        target = coordinator._pressure_test_result_check_target[CUBIC_IDENTITY]
+
+        assert (target.hour, target.minute, target.second) == (4, 0, 0)
+        assert target > dt_util.now()
+        await coordinator.async_shutdown()
+
+    async def test_does_not_check_before_the_target(self, hass, fake_manager):
+        coordinator = await _coordinator_with_schedule(hass, fake_manager, 4, 0)
+        target = coordinator._pressure_test_result_check_target[CUBIC_IDENTITY]
+        fake_manager.cubic_pressure_test_reports_by_device[CUBIC_IDENTITY] = {
+            "reports": [
+                build_pressure_test_report(timestamp_start=int(target.timestamp()))
+            ]
+        }
+
+        with _patch_manager(fake_manager):
+            async_fire_time_changed(hass, target)  # before the initial delay
+            await hass.async_block_till_done()
+
+        assert (
+            cubic_secure_latest_pressure_test_report(coordinator, CUBIC_IDENTITY)
+            is None
+        )
+        await coordinator.async_shutdown()
+
+    async def test_captures_a_report_from_at_or_after_the_target(
+        self, hass, fake_manager
+    ):
+        coordinator = await _coordinator_with_schedule(hass, fake_manager, 4, 0)
+        target = coordinator._pressure_test_result_check_target[CUBIC_IDENTITY]
+        report = build_pressure_test_report(
+            timestamp_start=int(target.timestamp()) + 5, outcome="successNoLeak"
+        )
+        fake_manager.cubic_pressure_test_reports_by_device[CUBIC_IDENTITY] = {
+            "reports": [report]
+        }
+
+        with _patch_manager(fake_manager):
+            async_fire_time_changed(
+                hass,
+                target
+                + timedelta(seconds=PRESSURE_TEST_RESULT_INITIAL_DELAY_SECONDS),
+            )
+            await hass.async_block_till_done()
+
+        assert (
+            cubic_secure_latest_pressure_test_report(coordinator, CUBIC_IDENTITY)
+            == report
+        )
+        await coordinator.async_shutdown()
+
+    async def test_ignores_a_stale_report_and_retries(self, hass, fake_manager):
+        """A report already sitting there from before the target (a
+        previous day, or an earlier postponed attempt) must not be
+        treated as today's result - only a report timestamped at or
+        after the target counts."""
+        coordinator = await _coordinator_with_schedule(hass, fake_manager, 4, 0)
+        target = coordinator._pressure_test_result_check_target[CUBIC_IDENTITY]
+        fake_manager.cubic_pressure_test_reports_by_device[CUBIC_IDENTITY] = {
+            "reports": [
+                build_pressure_test_report(
+                    timestamp_start=int(target.timestamp()) - 3600
+                )
+            ]
+        }
+
+        with _patch_manager(fake_manager):
+            async_fire_time_changed(
+                hass,
+                target
+                + timedelta(seconds=PRESSURE_TEST_RESULT_INITIAL_DELAY_SECONDS),
+            )
+            await hass.async_block_till_done()
+
+        assert (
+            cubic_secure_latest_pressure_test_report(coordinator, CUBIC_IDENTITY)
+            is None
+        )
+
+        fresh_report = build_pressure_test_report(
+            timestamp_start=int(target.timestamp()) + 60
+        )
+        fake_manager.cubic_pressure_test_reports_by_device[CUBIC_IDENTITY] = {
+            "reports": [fresh_report]
+        }
+
+        with _patch_manager(fake_manager):
+            async_fire_time_changed(
+                hass,
+                target
+                + timedelta(
+                    seconds=PRESSURE_TEST_RESULT_INITIAL_DELAY_SECONDS
+                    + PRESSURE_TEST_RESULT_RETRY_INTERVAL_SECONDS
+                ),
+            )
+            await hass.async_block_till_done()
+
+        assert (
+            cubic_secure_latest_pressure_test_report(coordinator, CUBIC_IDENTITY)
+            == fresh_report
+        )
+        await coordinator.async_shutdown()
+
+    async def test_gives_up_after_max_retry_and_retargets_tomorrow(
+        self, hass, fake_manager
+    ):
+        coordinator = await _coordinator_with_schedule(hass, fake_manager, 4, 0)
+        target = coordinator._pressure_test_result_check_target[CUBIC_IDENTITY]
+        fake_manager.cubic_pressure_test_reports_by_device[CUBIC_IDENTITY] = {
+            "reports": []
+        }
+
+        # async_fire_time_changed only fires whatever's already scheduled
+        # at the moment it's called - step through the retries one
+        # interval at a time, matching
+        # TestLeakDetectionExpiryRefresh.test_gives_up_after_the_max_retry_window's
+        # own approach.
+        first_check = target + timedelta(
+            seconds=PRESSURE_TEST_RESULT_INITIAL_DELAY_SECONDS
+        )
+        steps = (
+            PRESSURE_TEST_RESULT_MAX_RETRY_SECONDS
+            // PRESSURE_TEST_RESULT_RETRY_INTERVAL_SECONDS
+            + 2
+        )
+        with _patch_manager(fake_manager):
+            for step in range(steps + 1):
+                async_fire_time_changed(
+                    hass,
+                    first_check
+                    + timedelta(
+                        seconds=step * PRESSURE_TEST_RESULT_RETRY_INTERVAL_SECONDS
+                    ),
+                )
+                await hass.async_block_till_done()
+
+        assert (
+            cubic_secure_latest_pressure_test_report(coordinator, CUBIC_IDENTITY)
+            is None
+        )
+        new_target = coordinator._pressure_test_result_check_target[CUBIC_IDENTITY]
+        assert new_target == target + timedelta(days=1)
+        await coordinator.async_shutdown()
+
+    async def test_reschedules_when_the_configured_schedule_changes(
+        self, hass, fake_manager
+    ):
+        coordinator = await _coordinator_with_schedule(hass, fake_manager, 4, 0)
+        original_target = coordinator._pressure_test_result_check_target[
+            CUBIC_IDENTITY
+        ]
+
+        fake_manager.cubic_configuration_data = build_cubic_configuration(
+            pressure_test_schedule={"hour": 6, "minute": 30}
+        )
+        with _patch_manager(fake_manager):
+            data = await coordinator._async_update_data()
+        coordinator.async_set_updated_data(data)
+
+        new_target = coordinator._pressure_test_result_check_target[CUBIC_IDENTITY]
+        assert new_target != original_target
+        assert (new_target.hour, new_target.minute) == (6, 30)
+
+        # The old target's check must not fire anymore - it was cancelled.
+        fake_manager.calls.clear()
+        with _patch_manager(fake_manager):
+            async_fire_time_changed(
+                hass,
+                original_target
+                + timedelta(seconds=PRESSURE_TEST_RESULT_INITIAL_DELAY_SECONDS),
+            )
+            await hass.async_block_till_done()
+
+        assert not any(
+            c[0] == "get_cubic_secure_pressure_test_reports"
+            for c in fake_manager.calls
+        )
+        await coordinator.async_shutdown()
+
+    async def test_persists_the_captured_report_across_a_regular_poll(
+        self, hass, fake_manager
+    ):
+        """_fetch_data() builds a fresh per-device dict every poll - a
+        captured report must survive the next regular poll, not just sit
+        until the next actual test overwrites it."""
+        coordinator = await _coordinator_with_schedule(hass, fake_manager, 4, 0)
+        target = coordinator._pressure_test_result_check_target[CUBIC_IDENTITY]
+        report = build_pressure_test_report(
+            timestamp_start=int(target.timestamp()) + 5
+        )
+        fake_manager.cubic_pressure_test_reports_by_device[CUBIC_IDENTITY] = {
+            "reports": [report]
+        }
+        with _patch_manager(fake_manager):
+            async_fire_time_changed(
+                hass,
+                target
+                + timedelta(seconds=PRESSURE_TEST_RESULT_INITIAL_DELAY_SECONDS),
+            )
+            await hass.async_block_till_done()
+        assert (
+            cubic_secure_latest_pressure_test_report(coordinator, CUBIC_IDENTITY)
+            == report
+        )
+
+        with _patch_manager(fake_manager):
+            data = await coordinator._async_update_data()
+        coordinator.async_set_updated_data(data)
+
+        assert (
+            cubic_secure_latest_pressure_test_report(coordinator, CUBIC_IDENTITY)
+            == report
+        )
+        await coordinator.async_shutdown()
+
+    async def test_cancelled_on_shutdown(self, hass, fake_manager):
+        coordinator = await _coordinator_with_schedule(hass, fake_manager, 4, 0)
+        assert CUBIC_IDENTITY in coordinator._pressure_test_result_unsub
+
+        await coordinator.async_shutdown()
+
+        assert CUBIC_IDENTITY not in coordinator._pressure_test_result_unsub
