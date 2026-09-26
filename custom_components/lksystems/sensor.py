@@ -19,12 +19,10 @@ from homeassistant.const import (
     PERCENTAGE,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     UnitOfTemperature,
-    UnitOfTime,
 )
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -180,7 +178,7 @@ async def async_setup_entry(
                     LKLeakDetectionPausedUntilSensor(coordinator, device_identity)
                 )
                 cubic_entities.append(
-                    LKNextUpdateCountdownSensor(coordinator, device_identity)
+                    LKNextUpdateDueSensor(coordinator, device_identity)
                 )
 
                 async_add_entities(cubic_entities, True)
@@ -1092,64 +1090,45 @@ class LKLeakDetectionPausedUntilSensor(AbstractLkCubicSensor):
         )
 
 
-class LKNextUpdateCountdownSensor(
+class LKNextUpdateDueSensor(
     CubicSecureEntityMixin, CoordinatorEntity[LKSystemCoordinator], SensorEntity
 ):
-    """Seconds remaining until the coordinator's next scheduled poll.
+    """When the coordinator's next scheduled poll is due.
 
-    _handle_coordinator_update alone would only change this once per
-    actual poll - jumping straight back to the full interval - never
-    showing anything in between. Ticking down between polls needs its
-    own timer, independent of the coordinator.
+    A timestamp, not a live seconds-remaining countdown - a previous
+    version of this sensor ticked every second via its own timer, which
+    meant a recorder row every second, forever, confirmed to noticeably
+    bloat a real installation's database. A timestamp state only
+    changes once per actual poll (or reschedule - see
+    _publish_updated_data()'s own docstring), the same cadence as every
+    other sensor here; Home Assistant's frontend renders a live
+    relative countdown from a timestamp state entirely client-side,
+    with no repeated backend writes needed.
     """
 
-    _TICK_INTERVAL = timedelta(seconds=1)
-
-    _attr_name = "Next Update In"
+    _attr_name = "Next Update Due"
     _attr_icon = "mdi:timer-sand"
-    _attr_device_class = SensorDeviceClass.DURATION
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: LKSystemCoordinator, device_identity: str) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
         self._device_identity = device_identity
-        self._attr_unique_id = f"LkUid_nextUpdateCountdown_{device_identity}"
-        self._unsub_tick: CALLBACK_TYPE | None = None
+        self._attr_unique_id = f"LkUid_nextUpdateDue_{device_identity}"
 
     @property
-    def native_value(self) -> int | None:
-        """Return the whole seconds remaining until the next scheduled poll."""
+    def native_value(self) -> datetime | None:
+        """Return when the coordinator's next scheduled poll is due."""
         next_update_time = self.coordinator.data.get("next_update_time")
         if next_update_time is None:
             return None
-        remaining = dt_util.parse_datetime(next_update_time) - dt_util.utcnow()
-        return max(0, round(remaining.total_seconds()))
-
-    async def async_added_to_hass(self) -> None:
-        """Start ticking the countdown down between coordinator polls."""
-        await super().async_added_to_hass()
-        self._unsub_tick = async_track_time_interval(
-            self.hass, self._handle_tick, self._TICK_INTERVAL
-        )
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Stop ticking - a timer left running past entity teardown would
-        otherwise keep firing against a stale entity forever."""
-        if self._unsub_tick is not None:
-            self._unsub_tick()
-            self._unsub_tick = None
-        await super().async_will_remove_from_hass()
-
-    @callback
-    def _handle_tick(self, _now: datetime) -> None:
-        """Recompute and publish the countdown between polls."""
-        self.async_write_ha_state()
+        return dt_util.parse_datetime(next_update_time)
 
     async def async_update(self) -> None:
         """No-op: no live fetch of its own - the value is derived from
-        data the coordinator already has plus the wall clock.
+        data the coordinator already has.
 
         Home Assistant calls this unconditionally (regardless of
         should_poll) when a platform passes update_before_add=True to
