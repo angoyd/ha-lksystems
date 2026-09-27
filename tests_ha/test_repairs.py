@@ -11,12 +11,15 @@ from __future__ import annotations
 import pytest
 from homeassistant.helpers import issue_registry as ir
 
+from custom_components.lksystems.const import DOMAIN
+
 from custom_components.lksystems.repairs import (
     _issue_id,
     async_clear_auth_failed_issue,
     async_clear_persistent_update_failure_issue,
     async_clear_threshold_write_failed_issue,
     async_create_auth_failed_issue,
+    async_create_historical_unavailable_noise_issue,
     async_create_persistent_update_failure_issue,
     async_create_threshold_write_failed_issue,
 )
@@ -104,3 +107,36 @@ class TestThresholdWriteFailedIssue:
         async_create_threshold_write_failed_issue(hass, "entry-1", "device-1")
 
         assert get_issue(hass, self._issue_id_for("entry-1", "device-2")) is None
+
+
+class TestHistoricalUnavailableNoiseIssue:
+    """Unlike every other issue kind above, this one isn't tied to a live
+    condition - it's raised unconditionally on setup and never cleared by
+    code, so its own test focuses on that create-is-idempotent contract
+    instead of a create/clear cycle."""
+
+    async def test_create_registers_issue_with_expected_severity(self, hass):
+        async_create_historical_unavailable_noise_issue(hass, "entry-1")
+
+        issue = get_issue(hass, _issue_id("historical_unavailable_noise", "entry-1"))
+        assert issue is not None
+        assert issue.severity == ir.IssueSeverity.WARNING
+        assert issue.translation_key == "historical_unavailable_noise"
+        assert issue.is_fixable is False
+
+    async def test_issues_are_keyed_per_entry(self, hass):
+        async_create_historical_unavailable_noise_issue(hass, "entry-1")
+
+        assert get_issue(hass, _issue_id("historical_unavailable_noise", "entry-2")) is None
+
+    async def test_recreating_does_not_undo_a_user_dismissal(self, hass):
+        """A user dismissing this (there's no other way to clear it) must
+        stay dismissed across every future setup, since it's recreated
+        unconditionally on each one."""
+        issue_id = _issue_id("historical_unavailable_noise", "entry-1")
+        async_create_historical_unavailable_noise_issue(hass, "entry-1")
+        ir.async_ignore_issue(hass, DOMAIN, issue_id, ignore=True)
+
+        async_create_historical_unavailable_noise_issue(hass, "entry-1")
+
+        assert get_issue(hass, issue_id).dismissed_version is not None
