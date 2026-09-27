@@ -103,6 +103,15 @@ to it (`gh issue edit <n> --add-assignee <username>`) before starting -
 that's the signal to anyone else looking at the tracker that it's actively
 being worked, not just open and unclaimed.
 
+### Flagging issues found in passing
+
+A bug or gap noticed while working on something else gets filed as its own
+GitHub issue immediately - don't let it only live in a PR description, where
+it's easy to lose track of once that PR merges. Fix it inline in the current
+PR only if it's actually blocking that PR's own verification (e.g. a bug
+that prevents smoke-testing the change at hand); otherwise it's a separate
+PR. Use `needs-more-evidence` if the fix isn't obvious yet.
+
 ### Labels
 
 Beyond GitHub's own defaults (`bug`, `enhancement`, `question`, `duplicate`,
