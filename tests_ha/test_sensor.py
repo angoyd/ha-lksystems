@@ -404,6 +404,31 @@ class TestLastPressureTestSensor:
 
         assert entity.native_value == dt_util.utc_from_timestamp(1790410957)
 
+    async def test_restores_value_across_a_restart_when_fresh(
+        self, hass, fake_manager
+    ):
+        """Reproduces overnight production behavior: a report captured
+        before a restart must still show afterward via the restore
+        mechanism, the same way every other AbstractLkCubicSensor does -
+        not go back to unknown just because nothing has re-populated
+        coordinator.data yet (this only refreshes once a day, not every
+        regular poll)."""
+        entity_id_str = "sensor.test_restore_last_pressure_test"
+        restored_value = dt_util.utc_from_timestamp(1790410957)
+        _seed_restore_cache(hass, entity_id_str, restored_value, dt_util.utcnow())
+
+        entry = await setup_entry(hass, fake_manager)
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+        # No captured report yet this run - the only value available is
+        # the restored one.
+
+        entity = LKLastPressureTestSensor(coordinator, CUBIC_IDENTITY)
+        entity.hass = hass
+        entity.entity_id = entity_id_str
+        await entity.async_added_to_hass()
+
+        assert entity.native_value == restored_value
+
     async def test_belongs_to_the_cubic_secure_device(self, hass, fake_manager):
         await setup_entry(hass, fake_manager)
         sensor_entity_id = entity_id(
