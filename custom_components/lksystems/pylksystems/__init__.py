@@ -41,6 +41,15 @@ RATE_LIMIT_MAX_RETRIES = 3
 RATE_LIMIT_DEFAULT_BACKOFF = 5.0  # seconds, used when no Retry-After header
 RATE_LIMIT_MIN_BACKOFF = 1.0  # seconds; see _rate_limit_backoff() for why
 
+# A connection-level failure (a dropped connection, DNS blip, or a request
+# that never got a response at all before REQUEST_TIMEOUT fired) is usually
+# as transient as a 429 - retry it the same way rather than failing the
+# whole call on one bad attempt. Deliberately separate from a genuine HTTP
+# error response (ClientResponseError, e.g. a real 401): that must keep
+# failing immediately, never retried as if it might resolve itself.
+TRANSIENT_ERROR_MAX_RETRIES = 3
+TRANSIENT_ERROR_BACKOFF_SECONDS = 2.0
+
 _GET_SUCCESS_STATUSES = frozenset({200})
 _POST_SUCCESS_STATUSES = frozenset({200, 201})
 
@@ -252,9 +261,11 @@ class LKSystemsManager:
             return False
 
         _LOGGER.error(
-            "An error occurred during the request. URL: %s, Headers: %s. Error: %s",
+            "An error occurred during the request. URL: %s, Headers: %s. "
+            "Error: %s: %s",
             self.BASE_URL + endpoint,
             _redact_headers(headers),
+            type(error).__name__,
             error,
         )
         return False
@@ -363,10 +374,30 @@ class LKSystemsManager:
                     await self._sleep_before_retry(endpoint, delay, retry_attempt)
                     retry_attempt += 1
 
-                except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
+                except ClientResponseError as error:
+                    # A real HTTP error status came back (e.g. a genuine
+                    # 401) - that's not going to resolve itself on a
+                    # retry, unlike a connection-level failure below.
                     return (
                         await self.handle_client_error(endpoint, headers, error)
                     ), None
+
+                except (ClientError, asyncio.TimeoutError) as error:
+                    if retry_attempt >= TRANSIENT_ERROR_MAX_RETRIES:
+                        return (
+                            await self.handle_client_error(endpoint, headers, error)
+                        ), None
+                    retry_attempt += 1
+                    await self._log_and_sleep(
+                        TRANSIENT_ERROR_BACKOFF_SECONDS,
+                        "Connection error on %s, retrying in %.1fs "
+                        "(attempt %d/%d): %s",
+                        url,
+                        TRANSIENT_ERROR_BACKOFF_SECONDS,
+                        retry_attempt,
+                        TRANSIENT_ERROR_MAX_RETRIES,
+                        error,
+                    )
 
         try:
             return await asyncio.wait_for(attempt(), timeout=max_wait)
@@ -399,11 +430,7 @@ class LKSystemsManager:
 
     async def login(self):
         """Login to LK systems and get userId"""
-        # Tracks whichever of the two requests below is currently in
-        # flight, so a failure is reported against the URL that actually
-        # failed rather than always the first one.
         endpoint = "auth/auth/login"
-        userid_endpoint = "auth/auth/user"
         try:
             payload = {"email": self.username, "password": self.password}
             headers = {**self._get_headers()}
@@ -415,27 +442,21 @@ class LKSystemsManager:
                 if response.status == 200:
                     self.jwt_token = data.get("accessToken")
                     self.refresh_token = data.get("refreshToken")
-                    # Get userId
-                    endpoint = userid_endpoint
-                    headers = {
-                        **self._get_headers(),
-                        "authorization": f"Bearer {self.jwt_token}",
-                    }
-                    async with self.session.get(
-                        self.BASE_URL + endpoint, headers=headers
-                    ) as responseUserid:
-                        responseUserid.raise_for_status()
-                        if responseUserid.status == 200:
-                            useridJson = await responseUserid.json()
-                            self.userid = useridJson["userId"]
-                            return True
 
-                        _LOGGER.error(
-                            "Obtaining data from URL %s failed with status code %d",
-                            self.BASE_URL + endpoint,
-                            responseUserid.status,
-                        )
-                        return False
+                    success, userid_data = await self._get("auth/auth/user")
+                    if success:
+                        self.userid = userid_data["userId"]
+                        return True
+
+                    _LOGGER.error(
+                        "Login succeeded but could not obtain the account's "
+                        "userid from %sauth/auth/user - if you see this "
+                        "repeatedly, a comment on issue #17 with the "
+                        "timestamp and whether it happened right after a "
+                        "restart/fresh login would help diagnose it.",
+                        self.BASE_URL,
+                    )
+                    return False
 
                 if response.status == 401:
                     _LOGGER.error(
