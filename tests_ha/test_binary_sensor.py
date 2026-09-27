@@ -100,3 +100,62 @@ async def test_stays_available_while_blocked(hass, fake_manager):
             "unavailable",
             "unknown",
         )
+
+
+async def test_stays_available_through_a_single_transient_poll_failure(
+    hass, fake_manager
+):
+    """A single failed poll (e.g. an intermittent auth hiccup that
+    self-recovers on its own next attempt - confirmed against a real
+    account) must not flap this, or any other Cubic Secure entity,
+    unavailable and back - only CONSECUTIVE_FAILURE_THRESHOLD in a row
+    does (see CubicSecureEntityMixin.available's own docstring)."""
+    entry = await setup_entry(hass, fake_manager)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    rate_limited_entity_id = entity_id(
+        hass, "binary_sensor", _rate_limited_unique_id(CUBIC_IDENTITY)
+    )
+
+    fake_manager.get_user_structure_result = False
+    with patch_all_managers(fake_manager):
+        await coordinator.async_refresh()
+
+    assert coordinator.last_update_success is False
+    assert hass.states.get(rate_limited_entity_id).state != "unavailable"
+
+
+async def test_becomes_unavailable_after_consecutive_poll_failures(
+    hass, fake_manager
+):
+    entry = await setup_entry(hass, fake_manager)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    rate_limited_entity_id = entity_id(
+        hass, "binary_sensor", _rate_limited_unique_id(CUBIC_IDENTITY)
+    )
+
+    fake_manager.get_user_structure_result = False
+    with patch_all_managers(fake_manager):
+        for _ in range(3):
+            await coordinator.async_refresh()
+
+    assert hass.states.get(rate_limited_entity_id).state == "unavailable"
+
+
+async def test_recovers_immediately_once_a_poll_succeeds_again(hass, fake_manager):
+    entry = await setup_entry(hass, fake_manager)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    rate_limited_entity_id = entity_id(
+        hass, "binary_sensor", _rate_limited_unique_id(CUBIC_IDENTITY)
+    )
+
+    fake_manager.get_user_structure_result = False
+    with patch_all_managers(fake_manager):
+        for _ in range(3):
+            await coordinator.async_refresh()
+    assert hass.states.get(rate_limited_entity_id).state == "unavailable"
+
+    fake_manager.get_user_structure_result = True
+    with patch_all_managers(fake_manager):
+        await coordinator.async_refresh()
+
+    assert hass.states.get(rate_limited_entity_id).state != "unavailable"
