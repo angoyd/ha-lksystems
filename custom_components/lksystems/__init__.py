@@ -368,6 +368,11 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         self._pressure_test_result_unsub: dict[str, CALLBACK_TYPE] = {}
         self._pressure_test_result_check_target: dict[str, datetime] = {}
 
+        # Which devices _async_update_data() has already tried a one-off
+        # catch-up fetch for (see its own comment) - at most one attempt
+        # per device per coordinator lifetime, not one every poll.
+        self._pressure_test_report_catchup_attempted: set[str] = set()
+
         # One shared LKThresholdWriteCoordinator per device, created
         # lazily the first time any entity needs it - see
         # get_threshold_write_coordinator()'s own docstring.
@@ -1197,6 +1202,30 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                         "latest_pressure_test_report"
                     ),
                 )
+                if (
+                    device.get("latest_pressure_test_report") is None
+                    and device_identity not in self._pressure_test_report_catchup_attempted
+                ):
+                    # Nothing captured yet this coordinator lifetime -
+                    # most commonly right after a restart, before
+                    # RestoreEntity's own snapshot has necessarily
+                    # survived (it's periodic/on-clean-shutdown, not
+                    # guaranteed fresh across every kind of restart).
+                    # The report history is durable on LK's cloud
+                    # regardless of what survived locally, so fetch it
+                    # directly instead of waiting up to a day for the
+                    # next scheduled check. Attempted at most once per
+                    # device per coordinator lifetime, not on every poll
+                    # - a device that's never actually run a test would
+                    # otherwise be re-fetched forever for nothing.
+                    self._pressure_test_report_catchup_attempted.add(
+                        device_identity
+                    )
+                    report = await self._fetch_latest_pressure_test_report(
+                        device_identity
+                    )
+                    if report is not None:
+                        device["latest_pressure_test_report"] = report
                 self._ensure_pressure_test_result_check_scheduled(
                     device_identity, device.get("configuration")
                 )

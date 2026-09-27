@@ -2061,3 +2061,74 @@ class TestPressureTestResultCheck:
         await coordinator.async_shutdown()
 
         assert CUBIC_IDENTITY not in coordinator._pressure_test_result_unsub
+
+
+class TestPressureTestReportCatchUp:
+    """Right after a restart (or any time no report has been captured
+    yet this coordinator lifetime), the next regular poll fetches the
+    latest report directly instead of waiting up to a day for the next
+    scheduled check - the report history is durable on LK's cloud
+    regardless of what survived locally (e.g. across a restart that
+    wasn't a clean shutdown, which RestoreEntity's own snapshot isn't
+    guaranteed to have caught)."""
+
+    async def test_catches_up_a_missing_report_on_the_first_regular_poll(
+        self, hass, fake_manager
+    ):
+        report = build_pressure_test_report(timestamp_start=1790410957)
+        fake_manager.cubic_pressure_test_reports_by_device[CUBIC_IDENTITY] = {
+            "reports": [report]
+        }
+
+        coordinator = await _coordinator_with_schedule(hass, fake_manager, 4, 0)
+
+        assert (
+            cubic_secure_latest_pressure_test_report(coordinator, CUBIC_IDENTITY)
+            == report
+        )
+        await coordinator.async_shutdown()
+
+    async def test_does_not_re_attempt_once_already_tried(self, hass, fake_manager):
+        coordinator = await _coordinator_with_schedule(hass, fake_manager, 4, 0)
+        assert any(
+            c[0] == "get_cubic_secure_pressure_test_reports" for c in fake_manager.calls
+        )
+        calls_before = len(fake_manager.calls)
+
+        with _patch_manager(fake_manager):
+            data = await coordinator._async_update_data()
+        coordinator.async_set_updated_data(data)
+
+        assert not any(
+            c[0] == "get_cubic_secure_pressure_test_reports"
+            for c in fake_manager.calls[calls_before:]
+        )
+        await coordinator.async_shutdown()
+
+    async def test_does_not_fetch_once_a_report_is_already_known(
+        self, hass, fake_manager
+    ):
+        """The scheduled daily check (not this catch-up path) is what
+        populates a report normally - once one exists, the catch-up
+        fetch must never fire, even on the very first poll."""
+        entry = _make_entry(hass)
+        coordinator = LKSystemCoordinator(hass, entry)
+        with _patch_manager(fake_manager):
+            data = await coordinator._async_update_data()
+        coordinator.async_set_updated_data(data)
+        # Simulate a report already captured by the scheduled check,
+        # before the catch-up path ever gets a chance to run.
+        coordinator.data["cubic_devices"][CUBIC_IDENTITY][
+            "latest_pressure_test_report"
+        ] = build_pressure_test_report(timestamp_start=1790410957)
+        fake_manager.calls.clear()
+
+        with _patch_manager(fake_manager):
+            data = await coordinator._async_update_data()
+        coordinator.async_set_updated_data(data)
+
+        assert not any(
+            c[0] == "get_cubic_secure_pressure_test_reports"
+            for c in fake_manager.calls
+        )
+        await coordinator.async_shutdown()
