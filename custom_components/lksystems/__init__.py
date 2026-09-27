@@ -1586,6 +1586,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
+    repairs.async_create_historical_unavailable_noise_issue(hass, entry.entry_id)
 
     # Set up all platforms for this device/entry
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
