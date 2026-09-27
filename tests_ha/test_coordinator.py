@@ -1986,21 +1986,35 @@ class TestPressureTestResultCheck:
     async def test_reschedules_when_the_configured_schedule_changes(
         self, hass, fake_manager
     ):
-        coordinator = await _coordinator_with_schedule(hass, fake_manager, 4, 0)
-        original_target = coordinator._pressure_test_result_check_target[
-            CUBIC_IDENTITY
-        ]
-
-        fake_manager.cubic_configuration_data = build_cubic_configuration(
-            pressure_test_schedule={"hour": 6, "minute": 30}
+        """Pins `dt_util.now()` to midnight so both the original (4:00)
+        and new (6:30) schedule resolve to later *today*, with the new
+        target unambiguously after the original one - otherwise whether
+        that's true depends on the real wall-clock time the test happens
+        to run at (real "now" landing between 4:00 and 6:30 flips the
+        order), breaking the assertion below independent of any actual
+        cancellation bug."""
+        midnight_today = dt_util.now().replace(
+            hour=0, minute=0, second=0, microsecond=0
         )
-        with _patch_manager(fake_manager):
-            data = await coordinator._async_update_data()
-        coordinator.async_set_updated_data(data)
+        with patch(
+            "custom_components.lksystems.dt_util.now", return_value=midnight_today
+        ):
+            coordinator = await _coordinator_with_schedule(hass, fake_manager, 4, 0)
+            original_target = coordinator._pressure_test_result_check_target[
+                CUBIC_IDENTITY
+            ]
+
+            fake_manager.cubic_configuration_data = build_cubic_configuration(
+                pressure_test_schedule={"hour": 6, "minute": 30}
+            )
+            with _patch_manager(fake_manager):
+                data = await coordinator._async_update_data()
+            coordinator.async_set_updated_data(data)
 
         new_target = coordinator._pressure_test_result_check_target[CUBIC_IDENTITY]
         assert new_target != original_target
         assert (new_target.hour, new_target.minute) == (6, 30)
+        assert new_target > original_target
 
         # The old target's check must not fire anymore - it was cancelled.
         fake_manager.calls.clear()
