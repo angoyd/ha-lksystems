@@ -1029,7 +1029,7 @@ class LKSystemsManager:
             return await self.handle_client_error(endpoint, headers, error)
 
     async def set_thermostat_temperature(self, device_id, temperature):
-        """Set thermostat temperature through the API.
+        """Set thermostat temperature through the Device Control API.
 
         Args:
             device_id: The device identity (MAC or unique ID)
@@ -1038,73 +1038,17 @@ class LKSystemsManager:
         Returns:
             Result dictionary containing success status and any response data
         """
-        result = {"success": False, "data": None, "error": None}
+        endpoint = f"control/arc/sense/{device_id}/temperature"
+        _LOGGER.debug("Setting thermostat %s to temperature %s", device_id, temperature)
 
-        try:
-            # Use the correct Azure endpoint URL for thermostat temperature setting
-            url = "https://lk-arc-structure-mapper.azurewebsites.net/api/measurement/sense"
-
-            # Get base headers from _get_headers() method
-            headers = {
-                **self._get_headers(),
-                "authorization": f"Bearer {self.jwt_token}",
+        success, response_data = await self._post(endpoint, {"temperature": temperature})
+        if not success:
+            return {
+                "success": False,
+                "data": None,
+                "error": f"Request to {self.BASE_URL + endpoint} failed",
             }
-
-            _LOGGER.debug(
-                "Using Azure endpoint for thermostat control, token present: %s",
-                self.jwt_token is not None,
-            )
-
-            # Create simple payload according to the required format
-            payload = {"temperature": temperature, "mac": device_id}
-
-            _LOGGER.debug(
-                "Setting thermostat %s to temperature %s with payload: %s",
-                device_id,
-                temperature,
-                payload,
-            )
-
-            # Make the API request
-            async with self.session.post(url, headers=headers, json=payload) as resp:
-                if resp.status != 200 and resp.status != 201 and resp.status != 202:
-                    error_text = await resp.text()
-                    result["error"] = f"API error {resp.status}: {error_text}"
-                    return result
-
-                # Parse the response
-                try:
-                    response_data = await resp.json()
-                    result["data"] = response_data
-
-                    # Update our cached measurement data with the complete response
-                    # The response contains full device state including all measurements
-                    if device_id in self._device_measurements:
-                        # Log the complete response for debugging
-                        _LOGGER.debug(
-                            "Received updated device state: %s", response_data
-                        )
-
-                        # Update all fields from the response
-                        if isinstance(response_data, dict):
-                            # Store the complete state including currentTemperature, currentHumidity, etc.
-                            self._device_measurements[device_id].update(response_data)
-                            _LOGGER.debug(
-                                "Updated cached device state for %s", device_id
-                            )
-                except Exception as json_err:
-                    # Handle case where response might not be JSON
-                    result["data"] = await resp.text()
-                    _LOGGER.warning(
-                        "Failed to parse thermostat response as JSON: %s", json_err
-                    )
-
-                result["success"] = True
-                return result
-
-        except Exception as ex:
-            result["error"] = f"Exception: {str(ex)}"
-            return result
+        return {"success": True, "data": response_data, "error": None}
 
     @property
     def arc_sense_measurements(self):
