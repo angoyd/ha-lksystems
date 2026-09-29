@@ -33,7 +33,7 @@ echo "==> Creating remote directory..."
 ssh "${SSH_PORT_ARGS[@]}" "$HOST" "sudo mkdir -p $REMOTE_DIR && sudo chmod 777 $REMOTE_DIR"
 
 echo "==> Syncing files..."
-rsync -avO -e "ssh ${SSH_PORT_ARGS[*]}" --exclude='__pycache__' --exclude='.DS_Store' \
+rsync -avO --delete -e "ssh ${SSH_PORT_ARGS[*]}" --exclude='__pycache__' --exclude='.DS_Store' \
   custom_components/lksystems/ \
   "$HOST:$REMOTE_DIR/"
 

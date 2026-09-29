@@ -77,7 +77,7 @@ The `-p no:homeassistant` flag on the first command matters: once `pytest-homeas
 # e.g. ./deploy.sh homeassistant homeassistant.local
 ```
 
-Requirements on the target instance: SSH access (e.g. the [Terminal & SSH add-on](https://github.com/home-assistant/addons/tree/master/ssh) on HAOS) reachable with `ssh <user>@<host>`, and a `/config` directory. The script creates `/config/custom_components/lksystems/` if needed and `rsync`s the integration's files there.
+Requirements on the target instance: SSH access (e.g. the [Terminal & SSH add-on](https://github.com/home-assistant/addons/tree/master/ssh) on HAOS) reachable with `ssh <user>@<host>`, and a `/config` directory. The script creates `/config/custom_components/lksystems/` if needed and `rsync --delete`s the integration's files there, so the remote directory always ends up an exact mirror of your local `custom_components/lksystems/` - no stale files left over from a previously-deployed branch masking what's actually being tested.
 
 After syncing, reload the integration (**Settings → Devices & Services → LK Systems → ⋮ → Reload**), or restart HA on a first install.
 
