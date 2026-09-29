@@ -1,5 +1,47 @@
 {
+    "config": {
+        "step": {
+            "user": {
+                "data": {
+                    "username": "Username",
+                    "password": "Password"
+                },
+                "description": "Please enter the username and password for your LK Systems account",
+                "title": "LK Systems"
+            },
+            "reauth": {
+                "title": "Authentication expired for {name}",
+                "description": "Your LK Systems password appears to have changed - enter the new one to continue.",
+                "data": {
+                    "username": "Username",
+                    "password": "Password"
+                }
+            }
+        },
+        "error": {
+            "cannot_connect": "Failed to connect",
+            "invalid_auth": "Invalid authentication",
+            "unknown": "Unexpected error"
+        },
+        "abort": {
+            "already_configured": "This LK Systems account is already configured. One integration entry covers your whole account, including multiple Cubic Secure devices - you don't need to add it again to see additional devices.",
+            "reauth_successful": "Re-authentication was successful",
+            "reauth_failed": "Couldn't find the account entry to update - try removing and re-adding the integration instead."
+        }
+    },
     "issues": {
+        "auth_failed": {
+            "title": "LK Systems authentication failed",
+            "description": "The integration could not log in to your LK Systems account. Go to Settings > Devices & Services, select LK Systems, and follow the reauthentication prompt to re-enter your username and password."
+        },
+        "persistent_update_failure": {
+            "title": "LK Systems repeatedly failed to update",
+            "description": "The integration has failed to fetch data from the LK Systems cloud API several times in a row. Check your internet connection and the LK Systems service status. This clears automatically once an update succeeds."
+        },
+        "threshold_write_failed": {
+            "title": "LK Systems could not save a setting change",
+            "description": "A change to one of this device's leak-detection thresholds kept failing (often rate-limiting from the LK Systems cloud API) even after retrying, and was discarded - the device still has its previous setting. Try changing it again."
+        },
         "historical_unavailable_noise": {
             "title": "Older recorded history may include unnecessary \"unavailable\" states",
             "description": "A now-fixed bug made every LK Systems sensor briefly show \"unavailable\" on any single failed cloud request, even ones that recovered moments later. You may have some of that recorded in your history from before upgrading - it's harmless and doesn't affect anything going forward.\n\nCleaning it up is optional, and **deletes all recorded history for every LK Systems sensor** - temperature, pressure, water usage, everything, not just the unavailable states - **and can't be undone.** Only continue if you're fine losing that history. To do it anyway: go to your Home Assistant URL + `/developer-tools/action`, search for and select **Purge Recorder entities**, check **Domains to remove** and type `- lksystems` into the box, then select **Perform action**."

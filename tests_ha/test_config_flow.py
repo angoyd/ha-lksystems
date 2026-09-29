@@ -18,6 +18,7 @@ from unittest.mock import patch
 from homeassistant.config_entries import SOURCE_REAUTH
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers.translation import async_get_translations
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.lksystems.const import (
@@ -196,3 +197,46 @@ def test_every_abort_reason_has_a_translation_string():
     translated_reasons = set(strings["config"]["abort"])
 
     assert reasons_used_in_code <= translated_reasons
+
+
+async def test_config_flow_text_resolves_through_the_real_translation_loader(hass):
+    """Renders every config-flow string through Home Assistant's actual
+    translation loader (the same code path a running instance uses, not a
+    mock) - proving translations/en.json is what's actually read at
+    runtime, and that no [%key:...%] placeholder was left unresolved
+    (those never resolve for a custom integration - confirmed against
+    Home Assistant's own developer docs)."""
+    translations = await async_get_translations(
+        hass, "en", "config", integrations=["lksystems"]
+    )
+
+    assert (
+        translations["component.lksystems.config.step.user.data.username"]
+        == "Username"
+    )
+    assert (
+        translations["component.lksystems.config.step.user.data.password"]
+        == "Password"
+    )
+    assert (
+        translations["component.lksystems.config.step.reauth.title"]
+        == "Authentication expired for {name}"
+    )
+    assert (
+        translations["component.lksystems.config.error.cannot_connect"]
+        == "Failed to connect"
+    )
+    assert (
+        translations["component.lksystems.config.error.invalid_auth"]
+        == "Invalid authentication"
+    )
+    assert (
+        translations["component.lksystems.config.error.unknown"]
+        == "Unexpected error"
+    )
+    assert (
+        translations["component.lksystems.config.abort.reauth_successful"]
+        == "Re-authentication was successful"
+    )
+    for resolved in translations.values():
+        assert "[%key:" not in resolved
