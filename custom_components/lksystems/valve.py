@@ -5,17 +5,16 @@ from __future__ import annotations
 from homeassistant.components.valve import ValveDeviceClass, ValveEntity, ValveEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import (
+    CubicSecureEntityMixin,
     LKSystemCoordinator,
     cubic_secure_configuration,
     cubic_secure_device_identities,
-    cubic_secure_device_info,
 )
-from .const import ATTRIBUTION, CUBIC_SECURE_VALVE_STATE_CLOSED, DOMAIN
+from .const import CUBIC_SECURE_VALVE_STATE_CLOSED, DOMAIN
 from .services import close_valve_for_serial, open_valve_for_serial
 
 
@@ -31,7 +30,7 @@ async def async_setup_entry(
     )
 
 
-class LKCubicSecureValve(CoordinatorEntity[LKSystemCoordinator], ValveEntity):
+class LKCubicSecureValve(CubicSecureEntityMixin, CoordinatorEntity[LKSystemCoordinator], ValveEntity):
     """The Cubic Secure's main shutoff valve.
 
     Reflects live coordinator data (like the sibling sensors), so it
@@ -47,8 +46,6 @@ class LKCubicSecureValve(CoordinatorEntity[LKSystemCoordinator], ValveEntity):
     exposes open/closed, not a percentage.
     """
 
-    _attr_attribution = ATTRIBUTION
-    _attr_has_entity_name = True
     _attr_name = "Valve"
     _attr_device_class = ValveDeviceClass.WATER
     _attr_supported_features = ValveEntityFeature.OPEN | ValveEntityFeature.CLOSE
@@ -59,11 +56,6 @@ class LKCubicSecureValve(CoordinatorEntity[LKSystemCoordinator], ValveEntity):
         super().__init__(coordinator)
         self._device_identity = device_identity
         self._attr_unique_id = f"LkUid_valve_{device_identity}"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return the device_info of the device."""
-        return cubic_secure_device_info(self.coordinator, self._device_identity)
 
     @property
     def is_closed(self) -> bool | None:

@@ -994,15 +994,20 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         Auth failures raise a repair issue immediately - HA's own reauth
         flow already treats them as non-transient. A fetch failure only
         raises one after CONSECUTIVE_FAILURE_THRESHOLD in a row (see that
-        constant's own comment for why).
+        constant's own comment for why). Both count toward the same
+        _consecutive_failures streak - entities' own available property
+        gates on it too (see CubicSecureEntityMixin's own docstring), so
+        a single transient failure of either kind doesn't flap every
+        entity unavailable and back.
         """
         try:
             resp = await self._fetch_data()
         except ConfigEntryAuthFailed:
+            self._register_failure()
             repairs.async_create_auth_failed_issue(self.hass, self._entry_id)
             raise
         except UpdateFailed:
-            self._consecutive_failures += 1
+            self._register_failure()
             if self._consecutive_failures >= CONSECUTIVE_FAILURE_THRESHOLD:
                 repairs.async_create_persistent_update_failure_issue(
                     self.hass, self._entry_id
@@ -1012,6 +1017,26 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             self._consecutive_failures = 0
             repairs.async_clear_all_issues(self.hass, self._entry_id)
             return resp
+
+    def _register_failure(self) -> None:
+        """Count one failed update toward _consecutive_failures, and
+        notify entities right at the moment that crosses
+        CONSECUTIVE_FAILURE_THRESHOLD.
+
+        Home Assistant's own DataUpdateCoordinator only calls
+        async_update_listeners() on a transition (success<->failure) or a
+        real data change - not on every individual failed attempt
+        (confirmed by reading its own _async_refresh()). Without this, an
+        entity's available property - which depends on this counter, not
+        last_update_success, precisely so a single transient failure
+        doesn't flap it - would never get re-evaluated past the first
+        failure in a run, and Home Assistant would keep showing its
+        pre-failure state indefinitely instead of ever flipping
+        unavailable once failures are actually persistent.
+        """
+        self._consecutive_failures += 1
+        if self._consecutive_failures == CONSECUTIVE_FAILURE_THRESHOLD:
+            self.async_update_listeners()
 
     def _should_bypass_cache(
         self, device_identity: str, forced_device_ids: set[str], cache_updated: int
@@ -1501,15 +1526,33 @@ def cubic_secure_device_info(
 class CubicSecureEntityMixin:
     """Shared identity plumbing for every entity on a Cubic Secure device.
 
-    Mixed in by sensor.py, number.py, and button.py's per-platform base
-    classes, whose self.coordinator and self._device_identity this relies
-    on, so a future change to a Cubic Secure device's attribution/naming/
-    device_info only needs editing here instead of at each platform
-    separately.
+    Mixed in by sensor.py, number.py, button.py's, switch.py's, and
+    valve.py's per-platform base classes, whose self.coordinator and
+    self._device_identity this relies on, so a future change to a Cubic
+    Secure device's attribution/naming/device_info only needs editing
+    here instead of at each platform separately.
     """
 
     _attr_attribution = ATTRIBUTION
     _attr_has_entity_name = True
+
+    @property
+    def available(self) -> bool:
+        """Unavailable only once failures have run
+        CONSECUTIVE_FAILURE_THRESHOLD deep, not on every single one.
+
+        CoordinatorEntity's own default (coordinator.last_update_success)
+        flaps every entity unavailable and back on any isolated failure -
+        confirmed on a real account: an intermittent auth hiccup that
+        self-recovers within one retry (see LKSystemCoordinator's own
+        _async_update_data docstring) made every entity's history show
+        that blip, even ones like valveState/Rate Limited whose actual
+        value changes far less often than that. A brief failure keeps
+        showing the last known value instead - the same point past which
+        a repair issue gets raised, so the two now agree on what counts
+        as a real problem rather than noise.
+        """
+        return self.coordinator._consecutive_failures < CONSECUTIVE_FAILURE_THRESHOLD
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -1543,6 +1586,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
+    repairs.async_create_historical_unavailable_noise_issue(hass, entry.entry_id)
 
     # Set up all platforms for this device/entry
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
