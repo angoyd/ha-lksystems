@@ -896,9 +896,9 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
     def _publish_updated_data(self) -> None:
         """Notify listeners of a manual data update, refreshing
         next_update_time/update_time to match the schedule reset
-        async_set_updated_data() performs (see its own docstring) - or a
-        countdown built on next_update_time (sensor.py's Next Update In)
-        would freeze until the rescheduled poll actually happens.
+        async_set_updated_data() performs (see its own docstring) - or
+        sensor.py's Next Update Due sensor would keep showing the stale
+        pre-reschedule time until the rescheduled poll actually happens.
         """
         self.data.update(self._schedule_timestamps(dt_util.now()))
         self.async_set_updated_data(self.data)
