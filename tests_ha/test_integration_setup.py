@@ -19,6 +19,8 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.lksystems.const import DOMAIN
 
+from custom_components.lksystems.repairs import _issue_id
+
 from .conftest import (
     CUBIC_IDENTITY,
     CUBIC_IDENTITY_2,
@@ -27,6 +29,7 @@ from .conftest import (
     SENSOR_MAC,
     THERMOSTAT_MAC,
     entity_id as _entity_id,
+    get_issue,
     setup_entry as _setup_entry,
 )
 
@@ -218,3 +221,12 @@ async def test_login_failure_during_setup_starts_a_reauth_flow_for_this_entry(
         and flow["context"].get("entry_id") == entry.entry_id
         for flow in flows
     )
+
+
+async def test_setup_raises_the_historical_unavailable_noise_issue(
+    hass, fake_manager
+):
+    entry = await _setup_entry(hass, fake_manager)
+
+    issue = get_issue(hass, _issue_id("historical_unavailable_noise", entry.entry_id))
+    assert issue is not None

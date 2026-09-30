@@ -77,13 +77,15 @@ The `-p no:homeassistant` flag on the first command matters: once `pytest-homeas
 # e.g. ./deploy.sh homeassistant homeassistant.local
 ```
 
-Requirements on the target instance: SSH access (e.g. the [Terminal & SSH add-on](https://github.com/home-assistant/addons/tree/master/ssh) on HAOS) reachable with `ssh <user>@<host>`, and a `/config` directory. The script creates `/config/custom_components/lksystems/` if needed and `rsync`s the integration's files there.
+Requirements on the target instance: SSH access (e.g. the [Terminal & SSH add-on](https://github.com/home-assistant/addons/tree/master/ssh) on HAOS) reachable with `ssh <user>@<host>`, and a `/config` directory. The script creates `/config/custom_components/lksystems/` if needed and `rsync --delete`s the integration's files there, so the remote directory always ends up an exact mirror of your local `custom_components/lksystems/` - no stale files left over from a previously-deployed branch masking what's actually being tested.
 
 After syncing, reload the integration (**Settings → Devices & Services → LK Systems → ⋮ → Reload**), or restart HA on a first install.
 
 Copy `.env.example` to `.env` and fill in `HA_SSH_HOST`/`HA_SSH_USER` (`.env` is gitignored) to run `./deploy.sh` with no arguments instead of typing them every time.
 
-`tail_logs.py` polls Home Assistant's WebSocket API (`system_log/list`) and prints new lines, filtered to this integration by default - useful for watching a live test (e.g. a rate-limit check) as it happens. It uses the WebSocket API rather than tailing a log file over SSH (where - or whether - Home Assistant writes a log file to disk varies by install type and by each instance's own logger config) and rather than the REST API's `GET /api/error_log` (still listed in Home Assistant's developer docs, but removed from Core - confirmed returning a 404 against a real instance). Needs `HA_LONG_LIVED_TOKEN` in `.env` (see `.env.example` for how to generate a token); `HA_URL` there is optional, defaulting to `https://$HA_SSH_HOST:8123`. Uses `aiohttp` (already a project dependency) - run it with the test venv's Python: `.venv-test/bin/python3 tail_logs.py`.
+`tail_logs.py` polls Home Assistant's WebSocket API (`system_log/list`) and prints new lines, filtered to this integration by default - useful for watching a live test (e.g. a rate-limit check) as it happens. It uses the WebSocket API rather than tailing a log file over SSH (where - or whether - Home Assistant writes a log file to disk varies by install type and by each instance's own logger config) and rather than the REST API's `GET /api/error_log` (still listed in Home Assistant's developer docs, but removed from Core - confirmed returning a 404 against a real instance). Needs `HA_LONG_LIVED_TOKEN` in `.env` (see `.env.example` for how to generate a token); `HA_URL` there is optional, defaulting to `https://$HA_SSH_HOST:8123`. Uses `aiohttp` (already a project dependency).
+
+A long-lived token only covers the REST/WebSocket API, not the web frontend itself - for anything that needs confirming against the *actual UI* (exact wording/labels before writing user-facing text like a repair issue's instructions, or admin-only pages such as Developer Tools) an AI coding assistant with browser automation needs real frontend login credentials. Set `HA_UI_USERNAME`/`HA_UI_PASSWORD` in `.env` for a temporary or limited account with admin rights - most of what needs checking is admin-only.
 
 ### Using the Home Assistant MCP server for live testing
 

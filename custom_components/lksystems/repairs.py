@@ -91,6 +91,27 @@ def async_clear_threshold_write_failed_issue(
     _clear_issue(hass, entry_id, f"threshold_write_failed_{device_identity}")
 
 
+def async_create_historical_unavailable_noise_issue(
+    hass: HomeAssistant, entry_id: str
+) -> None:
+    """Raise a one-time, informational notice about pre-fix history noise.
+
+    Entities used to flap `unavailable` on any single transient poll
+    failure, before `CubicSecureEntityMixin.available` started gating on
+    a consecutive-failure streak instead - accounts that were set up
+    before that fix may have that noise recorded in their history. This
+    tells the user where it came from and how to optionally clean it up.
+
+    Raised unconditionally on every setup rather than tied to a live
+    condition: `_create_issue()` is a no-op once the issue already
+    exists, so this only ever surfaces once and stays dismissed once the
+    user dismisses it - there's nothing here to detect or clear.
+    """
+    _create_issue(
+        hass, entry_id, "historical_unavailable_noise", ir.IssueSeverity.WARNING
+    )
+
+
 def async_clear_all_issues(hass: HomeAssistant, entry_id: str) -> None:
     """Clear every repair issue this integration can raise for entry_id."""
     async_clear_auth_failed_issue(hass, entry_id)

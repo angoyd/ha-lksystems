@@ -41,6 +41,15 @@ RATE_LIMIT_MAX_RETRIES = 3
 RATE_LIMIT_DEFAULT_BACKOFF = 5.0  # seconds, used when no Retry-After header
 RATE_LIMIT_MIN_BACKOFF = 1.0  # seconds; see _rate_limit_backoff() for why
 
+# A connection-level failure (a dropped connection, DNS blip, or a request
+# that never got a response at all before REQUEST_TIMEOUT fired) is usually
+# as transient as a 429 - retry it the same way rather than failing the
+# whole call on one bad attempt. Deliberately separate from a genuine HTTP
+# error response (ClientResponseError, e.g. a real 401): that must keep
+# failing immediately, never retried as if it might resolve itself.
+TRANSIENT_ERROR_MAX_RETRIES = 3
+TRANSIENT_ERROR_BACKOFF_SECONDS = 2.0
+
 _GET_SUCCESS_STATUSES = frozenset({200})
 _POST_SUCCESS_STATUSES = frozenset({200, 201})
 
@@ -252,9 +261,11 @@ class LKSystemsManager:
             return False
 
         _LOGGER.error(
-            "An error occurred during the request. URL: %s, Headers: %s. Error: %s",
+            "An error occurred during the request. URL: %s, Headers: %s. "
+            "Error: %s: %s",
             self.BASE_URL + endpoint,
             _redact_headers(headers),
+            type(error).__name__,
             error,
         )
         return False
@@ -363,10 +374,30 @@ class LKSystemsManager:
                     await self._sleep_before_retry(endpoint, delay, retry_attempt)
                     retry_attempt += 1
 
-                except (ClientResponseError, ClientError, asyncio.TimeoutError) as error:
+                except ClientResponseError as error:
+                    # A real HTTP error status came back (e.g. a genuine
+                    # 401) - that's not going to resolve itself on a
+                    # retry, unlike a connection-level failure below.
                     return (
                         await self.handle_client_error(endpoint, headers, error)
                     ), None
+
+                except (ClientError, asyncio.TimeoutError) as error:
+                    if retry_attempt >= TRANSIENT_ERROR_MAX_RETRIES:
+                        return (
+                            await self.handle_client_error(endpoint, headers, error)
+                        ), None
+                    retry_attempt += 1
+                    await self._log_and_sleep(
+                        TRANSIENT_ERROR_BACKOFF_SECONDS,
+                        "Connection error on %s, retrying in %.1fs "
+                        "(attempt %d/%d): %s",
+                        url,
+                        TRANSIENT_ERROR_BACKOFF_SECONDS,
+                        retry_attempt,
+                        TRANSIENT_ERROR_MAX_RETRIES,
+                        error,
+                    )
 
         try:
             return await asyncio.wait_for(attempt(), timeout=max_wait)
@@ -399,11 +430,7 @@ class LKSystemsManager:
 
     async def login(self):
         """Login to LK systems and get userId"""
-        # Tracks whichever of the two requests below is currently in
-        # flight, so a failure is reported against the URL that actually
-        # failed rather than always the first one.
         endpoint = "auth/auth/login"
-        userid_endpoint = "auth/auth/user"
         try:
             payload = {"email": self.username, "password": self.password}
             headers = {**self._get_headers()}
@@ -415,27 +442,21 @@ class LKSystemsManager:
                 if response.status == 200:
                     self.jwt_token = data.get("accessToken")
                     self.refresh_token = data.get("refreshToken")
-                    # Get userId
-                    endpoint = userid_endpoint
-                    headers = {
-                        **self._get_headers(),
-                        "authorization": f"Bearer {self.jwt_token}",
-                    }
-                    async with self.session.get(
-                        self.BASE_URL + endpoint, headers=headers
-                    ) as responseUserid:
-                        responseUserid.raise_for_status()
-                        if responseUserid.status == 200:
-                            useridJson = await responseUserid.json()
-                            self.userid = useridJson["userId"]
-                            return True
 
-                        _LOGGER.error(
-                            "Obtaining data from URL %s failed with status code %d",
-                            self.BASE_URL + endpoint,
-                            responseUserid.status,
-                        )
-                        return False
+                    success, userid_data = await self._get("auth/auth/user")
+                    if success:
+                        self.userid = userid_data["userId"]
+                        return True
+
+                    _LOGGER.error(
+                        "Login succeeded but could not obtain the account's "
+                        "userid from %sauth/auth/user - if you see this "
+                        "repeatedly, a comment on issue #17 with the "
+                        "timestamp and whether it happened right after a "
+                        "restart/fresh login would help diagnose it.",
+                        self.BASE_URL,
+                    )
+                    return False
 
                 if response.status == 401:
                     _LOGGER.error(
@@ -1008,7 +1029,7 @@ class LKSystemsManager:
             return await self.handle_client_error(endpoint, headers, error)
 
     async def set_thermostat_temperature(self, device_id, temperature):
-        """Set thermostat temperature through the API.
+        """Set thermostat temperature through the Device Control API.
 
         Args:
             device_id: The device identity (MAC or unique ID)
@@ -1017,73 +1038,17 @@ class LKSystemsManager:
         Returns:
             Result dictionary containing success status and any response data
         """
-        result = {"success": False, "data": None, "error": None}
+        endpoint = f"control/arc/sense/{device_id}/temperature"
+        _LOGGER.debug("Setting thermostat %s to temperature %s", device_id, temperature)
 
-        try:
-            # Use the correct Azure endpoint URL for thermostat temperature setting
-            url = "https://lk-arc-structure-mapper.azurewebsites.net/api/measurement/sense"
-
-            # Get base headers from _get_headers() method
-            headers = {
-                **self._get_headers(),
-                "authorization": f"Bearer {self.jwt_token}",
+        success, response_data = await self._post(endpoint, {"temperature": temperature})
+        if not success:
+            return {
+                "success": False,
+                "data": None,
+                "error": f"Request to {self.BASE_URL + endpoint} failed",
             }
-
-            _LOGGER.debug(
-                "Using Azure endpoint for thermostat control, token present: %s",
-                self.jwt_token is not None,
-            )
-
-            # Create simple payload according to the required format
-            payload = {"temperature": temperature, "mac": device_id}
-
-            _LOGGER.debug(
-                "Setting thermostat %s to temperature %s with payload: %s",
-                device_id,
-                temperature,
-                payload,
-            )
-
-            # Make the API request
-            async with self.session.post(url, headers=headers, json=payload) as resp:
-                if resp.status != 200 and resp.status != 201 and resp.status != 202:
-                    error_text = await resp.text()
-                    result["error"] = f"API error {resp.status}: {error_text}"
-                    return result
-
-                # Parse the response
-                try:
-                    response_data = await resp.json()
-                    result["data"] = response_data
-
-                    # Update our cached measurement data with the complete response
-                    # The response contains full device state including all measurements
-                    if device_id in self._device_measurements:
-                        # Log the complete response for debugging
-                        _LOGGER.debug(
-                            "Received updated device state: %s", response_data
-                        )
-
-                        # Update all fields from the response
-                        if isinstance(response_data, dict):
-                            # Store the complete state including currentTemperature, currentHumidity, etc.
-                            self._device_measurements[device_id].update(response_data)
-                            _LOGGER.debug(
-                                "Updated cached device state for %s", device_id
-                            )
-                except Exception as json_err:
-                    # Handle case where response might not be JSON
-                    result["data"] = await resp.text()
-                    _LOGGER.warning(
-                        "Failed to parse thermostat response as JSON: %s", json_err
-                    )
-
-                result["success"] = True
-                return result
-
-        except Exception as ex:
-            result["error"] = f"Exception: {str(ex)}"
-            return result
+        return {"success": True, "data": response_data, "error": None}
 
     @property
     def arc_sense_measurements(self):

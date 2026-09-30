@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from aiohttp import ClientConnectionError
 from aioresponses import aioresponses
+from yarl import URL
 
 import pylksystems
 
@@ -109,6 +110,43 @@ class TestLogin:
                 result = await manager.login()
 
         assert result is False
+
+    async def test_userid_lookup_timeout_is_retried_and_eventually_succeeds(
+        self, manager, mock_sleep
+    ):
+        """A transient blip on the userid lookup used to fail the whole
+        login immediately - now it retries, the same as every other
+        request through _get()/_post()."""
+        with aioresponses() as m:
+            m.post(
+                BASE_URL + "auth/auth/login",
+                payload={"accessToken": "tok-123", "refreshToken": "refresh-123"},
+                status=200,
+            )
+            m.get(BASE_URL + "auth/auth/user", exception=asyncio.TimeoutError())
+            m.get(BASE_URL + "auth/auth/user", payload={"userId": "user-123"}, status=200)
+            async with manager:
+                result = await manager.login()
+
+        assert result is True
+        assert manager.userid == "user-123"
+
+    async def test_userid_lookup_failure_points_at_the_known_issue(
+        self, manager, mock_sleep, caplog
+    ):
+        with aioresponses() as m:
+            m.post(
+                BASE_URL + "auth/auth/login",
+                payload={"accessToken": "tok-123", "refreshToken": "refresh-123"},
+                status=200,
+            )
+            m.get(BASE_URL + "auth/auth/user", exception=asyncio.TimeoutError(), repeat=True)
+            async with manager:
+                with caplog.at_level(logging.ERROR):
+                    result = await manager.login()
+
+        assert result is False
+        assert "#17" in caplog.text
 
 
 class TestGetUserStructure:
@@ -573,6 +611,59 @@ class TestSetDeviceTemperature:
         assert result is False
 
 
+class TestSetThermostatTemperature:
+    """set_thermostat_temperature() must use the documented Device Control
+    endpoint on the same API gateway as every other call. The host it
+    used to post to no longer resolves in DNS, so every setpoint change
+    failed with "Domain name not found"."""
+
+    ENDPOINT = BASE_URL + "control/arc/sense/AA:BB:CC/temperature"
+
+    async def test_posts_the_setpoint_to_the_device_control_endpoint(self, manager):
+        with aioresponses() as m:
+            m.post(self.ENDPOINT, payload={"temperature": 215}, status=200)
+            async with manager:
+                result = await manager.set_thermostat_temperature("AA:BB:CC", 215)
+
+            [request] = m.requests[("POST", URL(self.ENDPOINT))]
+
+        assert result["success"] is True
+        assert result["data"] == {"temperature": 215}
+        assert request.kwargs["json"] == {"temperature": 215}
+
+    async def test_error_status_is_reported_as_failure(self, manager):
+        with aioresponses() as m:
+            m.post(self.ENDPOINT, status=400)
+            async with manager:
+                result = await manager.set_thermostat_temperature("AA:BB:CC", 215)
+
+        assert result["success"] is False
+        assert result["error"]
+
+    async def test_rate_limited_setpoint_is_retried(self, manager, mock_sleep):
+        with aioresponses() as m:
+            m.post(self.ENDPOINT, status=429, headers={"Retry-After": "1"})
+            m.post(self.ENDPOINT, payload={"temperature": 215}, status=200)
+            async with manager:
+                result = await manager.set_thermostat_temperature("AA:BB:CC", 215)
+
+        assert result["success"] is True
+
+
+class TestHandleClientError:
+    async def test_logs_the_exception_type_alongside_str(self, manager, caplog):
+        """asyncio.TimeoutError's str() is '' by design - confirmed live,
+        the log line this produced read "... Error: " with nothing after
+        it. The exception's type name must be logged too, so an empty
+        str() still identifies what actually failed."""
+        with caplog.at_level(logging.ERROR):
+            await manager.handle_client_error(
+                "some/endpoint", {}, asyncio.TimeoutError()
+            )
+
+        assert "TimeoutError" in caplog.text
+
+
 class TestSensitiveDataNotLogged:
     """Regression tests: request failures and debug logs must never leak
     the bearer token, the API subscription key, or any part of a JWT.
@@ -601,7 +692,7 @@ class TestSensitiveDataNotLogged:
 
         with aioresponses() as m:
             m.post(
-                "https://lk-arc-structure-mapper.azurewebsites.net/api/measurement/sense",
+                BASE_URL + "control/arc/sense/AA:BB:CC/temperature",
                 payload={"currentTemperature": 210},
                 status=200,
             )
@@ -805,6 +896,84 @@ class TestRateLimitBackoff:
 
         assert result is False
         assert any(record.levelno >= logging.ERROR for record in caplog.records)
+
+
+@pytest.mark.usefixtures("mock_sleep")
+class TestTransientErrorRetry:
+    """A connection-level failure (a dropped connection, DNS blip, or a
+    request that never got a response at all) is usually as transient as
+    a 429 - the client should retry it the same way, while a genuine HTTP
+    error response (e.g. a real 401) must keep failing immediately.
+    """
+
+    async def test_timeout_is_retried_and_eventually_succeeds(
+        self, manager, mock_sleep
+    ):
+        url = BASE_URL + "service/cubic/secure/cubic-1/measurement/0"
+
+        with aioresponses() as m:
+            m.get(url, exception=asyncio.TimeoutError())
+            m.get(url, payload={"flow": 0.0}, status=200)
+            async with manager:
+                result = await manager.get_cubic_secure_measurement("cubic-1")
+
+        assert result is True
+        assert manager.cubic_secure_measurement == {"flow": 0.0}
+        mock_sleep.assert_awaited_once_with(pylksystems.TRANSIENT_ERROR_BACKOFF_SECONDS)
+
+    async def test_connection_error_is_retried_and_eventually_succeeds(
+        self, manager, mock_sleep
+    ):
+        url = BASE_URL + "service/cubic/secure/cubic-1/measurement/0"
+
+        with aioresponses() as m:
+            m.get(url, exception=ClientConnectionError())
+            m.get(url, payload={"flow": 0.0}, status=200)
+            async with manager:
+                result = await manager.get_cubic_secure_measurement("cubic-1")
+
+        assert result is True
+
+    async def test_post_transient_error_is_retried_and_eventually_succeeds(
+        self, manager, mock_sleep
+    ):
+        url = BASE_URL + "control/cubic/secure/cubic-1/valve/close"
+
+        with aioresponses() as m:
+            m.post(url, exception=asyncio.TimeoutError())
+            m.post(url, payload={}, status=200)
+            async with manager:
+                result = await manager.cubic_secure_close_valve("cubic-1")
+
+        assert result is True
+
+    async def test_exhausting_retries_returns_false(self, manager, mock_sleep):
+        url = BASE_URL + "service/cubic/secure/cubic-1/measurement/0"
+
+        with aioresponses() as m:
+            m.get(url, exception=asyncio.TimeoutError(), repeat=True)
+            async with manager:
+                result = await manager.get_cubic_secure_measurement("cubic-1")
+
+        assert result is False
+        assert mock_sleep.await_count == pylksystems.TRANSIENT_ERROR_MAX_RETRIES
+
+    async def test_a_genuine_http_error_status_is_not_retried(
+        self, manager, mock_sleep
+    ):
+        """A real HTTP error response (as opposed to no response at all)
+        must keep failing on the first attempt - retrying it could turn a
+        fast, correct failure (e.g. a wrong password) into a slow one."""
+        manager.userid = "user-123"
+        url = BASE_URL + "service/users/user/user-123/structure/1"
+
+        with aioresponses() as m:
+            m.get(url, status=401)
+            async with manager:
+                result = await manager.get_user_structure()
+
+        assert result is False
+        mock_sleep.assert_not_awaited()
 
 
 class TestLastRateLimitRetryAfter:

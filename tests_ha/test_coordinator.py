@@ -341,6 +341,11 @@ class TestRepairIssues:
             await coordinator._async_update_data()
 
         assert get_issue(hass, _issue_id("auth_failed", entry.entry_id)) is not None
+        # Counts toward the same streak a fetch failure does - entities'
+        # own available property gates on it too, so a transient auth
+        # hiccup (confirmed intermittently against the real API) doesn't
+        # flap every entity unavailable and back on its own.
+        assert coordinator._consecutive_failures == 1
 
     async def test_successful_update_clears_the_auth_failed_issue(
         self, hass, fake_manager
