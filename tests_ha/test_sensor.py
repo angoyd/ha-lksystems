@@ -33,8 +33,6 @@ from custom_components.lksystems.sensor import (
     LKArcHubEntity,
     LKArcSensorEntity,
     LKCubicSensor,
-    LKLastPressureTestResultSensor,
-    LKLastPressureTestSensor,
     LKLeakDetectionPausedUntilSensor,
     LKNextUpdateDueSensor,
 )
@@ -45,7 +43,6 @@ from .conftest import (
     SENSOR_MAC,
     THERMOSTAT_MAC,
     build_cubic_configuration,
-    build_pressure_test_report,
     entity_id,
     setup_entry,
 )
@@ -368,170 +365,6 @@ class TestLeakDetectionPausedUntilSensor:
         await entity.async_added_to_hass()
 
         assert entity.native_value == restored_value
-
-
-def _set_latest_pressure_test_report(coordinator, device_identity: str, report: dict) -> None:
-    """Populate a device's captured pressure-test report directly - the
-    unit these sensors read, independent of
-    LKSystemCoordinator._schedule_pressure_test_result_check()'s own
-    point-in-time scheduling logic (covered separately in
-    test_coordinator.py)."""
-    coordinator.data["cubic_devices"][device_identity][
-        "latest_pressure_test_report"
-    ] = report
-
-
-class TestLastPressureTestSensor:
-    """When the device's most recent automatic pressure test ran."""
-
-    async def test_none_until_a_report_has_been_captured(self, hass, fake_manager):
-        entry = await setup_entry(hass, fake_manager)
-        coordinator = hass.data[DOMAIN][entry.entry_id]
-
-        entity = LKLastPressureTestSensor(coordinator, CUBIC_IDENTITY)
-
-        assert entity.native_value is None
-
-    async def test_reflects_the_captured_reports_start_time(
-        self, hass, fake_manager
-    ):
-        entry = await setup_entry(hass, fake_manager)
-        coordinator = hass.data[DOMAIN][entry.entry_id]
-        report = build_pressure_test_report(timestamp_start=1790410957)
-        _set_latest_pressure_test_report(coordinator, CUBIC_IDENTITY, report)
-
-        entity = LKLastPressureTestSensor(coordinator, CUBIC_IDENTITY)
-
-        assert entity.native_value == dt_util.utc_from_timestamp(1790410957)
-
-    async def test_restores_value_across_a_restart_when_fresh(
-        self, hass, fake_manager
-    ):
-        """Reproduces overnight production behavior: a report captured
-        before a restart must still show afterward via the restore
-        mechanism, the same way every other AbstractLkCubicSensor does -
-        not go back to unknown just because nothing has re-populated
-        coordinator.data yet (this only refreshes once a day, not every
-        regular poll)."""
-        entity_id_str = "sensor.test_restore_last_pressure_test"
-        restored_value = dt_util.utc_from_timestamp(1790410957)
-        _seed_restore_cache(hass, entity_id_str, restored_value, dt_util.utcnow())
-
-        entry = await setup_entry(hass, fake_manager)
-        coordinator = hass.data[DOMAIN][entry.entry_id]
-        # No captured report yet this run - the only value available is
-        # the restored one.
-
-        entity = LKLastPressureTestSensor(coordinator, CUBIC_IDENTITY)
-        entity.hass = hass
-        entity.entity_id = entity_id_str
-        await entity.async_added_to_hass()
-
-        assert entity.native_value == restored_value
-
-    async def test_belongs_to_the_cubic_secure_device(self, hass, fake_manager):
-        await setup_entry(hass, fake_manager)
-        sensor_entity_id = entity_id(
-            hass, "sensor", f"LkUid_lastPressureTest_{CUBIC_IDENTITY}"
-        )
-
-        device = dr.async_get(hass).async_get_device(
-            identifiers={(DOMAIN, CUBIC_IDENTITY)}
-        )
-        registry_entry = er.async_get(hass).async_get(sensor_entity_id)
-
-        assert registry_entry.device_id == device.id
-        assert registry_entry.disabled_by is None
-
-
-class TestLastPressureTestResultSensor:
-    """The outcome of the device's most recent automatic pressure test."""
-
-    async def test_none_until_a_report_has_been_captured(self, hass, fake_manager):
-        entry = await setup_entry(hass, fake_manager)
-        coordinator = hass.data[DOMAIN][entry.entry_id]
-
-        entity = LKLastPressureTestResultSensor(coordinator, CUBIC_IDENTITY)
-
-        assert entity.native_value is None
-
-    async def test_reflects_a_known_outcome_as_its_friendly_label(
-        self, hass, fake_manager
-    ):
-        entry = await setup_entry(hass, fake_manager)
-        coordinator = hass.data[DOMAIN][entry.entry_id]
-        report = build_pressure_test_report(
-            timestamp_start=1790410957, outcome="successNoLeak"
-        )
-        _set_latest_pressure_test_report(coordinator, CUBIC_IDENTITY, report)
-
-        entity = LKLastPressureTestResultSensor(coordinator, CUBIC_IDENTITY)
-
-        assert entity.native_value == "No Leak Detected"
-
-    async def test_falls_back_to_the_raw_value_for_an_unmapped_outcome(
-        self, hass, fake_manager
-    ):
-        """A real leak may produce an outcome value never seen in this
-        integration's own observed history - must display something
-        rather than erroring, unlike an ENUM sensor would."""
-        entry = await setup_entry(hass, fake_manager)
-        coordinator = hass.data[DOMAIN][entry.entry_id]
-        report = build_pressure_test_report(
-            timestamp_start=1790410957, outcome="somethingNeverSeenBefore"
-        )
-        _set_latest_pressure_test_report(coordinator, CUBIC_IDENTITY, report)
-
-        entity = LKLastPressureTestResultSensor(coordinator, CUBIC_IDENTITY)
-
-        assert entity.native_value == "somethingNeverSeenBefore"
-
-    async def test_extra_state_attributes_expose_duration_and_pressure_delta(
-        self, hass, fake_manager
-    ):
-        entry = await setup_entry(hass, fake_manager)
-        coordinator = hass.data[DOMAIN][entry.entry_id]
-        report = build_pressure_test_report(
-            timestamp_start=1790410957, duration=45, pressure_delta=-31
-        )
-        _set_latest_pressure_test_report(coordinator, CUBIC_IDENTITY, report)
-
-        entity = LKLastPressureTestResultSensor(coordinator, CUBIC_IDENTITY)
-
-        assert entity.extra_state_attributes["duration_seconds"] == 45
-        assert entity.extra_state_attributes["pressure_delta"] == -31
-
-    async def test_extra_state_attributes_are_null_for_a_postponed_test(
-        self, hass, fake_manager
-    ):
-        entry = await setup_entry(hass, fake_manager)
-        coordinator = hass.data[DOMAIN][entry.entry_id]
-        report = build_pressure_test_report(
-            timestamp_start=1790410957,
-            outcome="postponedFlow",
-            duration=None,
-            pressure_delta=None,
-        )
-        _set_latest_pressure_test_report(coordinator, CUBIC_IDENTITY, report)
-
-        entity = LKLastPressureTestResultSensor(coordinator, CUBIC_IDENTITY)
-
-        assert entity.extra_state_attributes["duration_seconds"] is None
-        assert entity.extra_state_attributes["pressure_delta"] is None
-
-    async def test_belongs_to_the_cubic_secure_device(self, hass, fake_manager):
-        await setup_entry(hass, fake_manager)
-        sensor_entity_id = entity_id(
-            hass, "sensor", f"LkUid_lastPressureTestResult_{CUBIC_IDENTITY}"
-        )
-
-        device = dr.async_get(hass).async_get_device(
-            identifiers={(DOMAIN, CUBIC_IDENTITY)}
-        )
-        registry_entry = er.async_get(hass).async_get(sensor_entity_id)
-
-        assert registry_entry.device_id == device.id
-        assert registry_entry.disabled_by is None
 
 
 class TestNextUpdateDueSensor:

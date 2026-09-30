@@ -29,11 +29,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 import homeassistant.util.dt as dt_util
 
-from . import (
-    CubicSecureEntityMixin,
-    LKSystemCoordinator,
-    cubic_secure_latest_pressure_test_report,
-)
+from . import CubicSecureEntityMixin, LKSystemCoordinator
 from .const import (
     C_NEXT_UPDATE_TIME,
     C_UPDATE_TIME,
@@ -41,7 +37,6 @@ from .const import (
     INTEGRATION_NAME,
     LK_CUBICSECURE_SENSORS,
     LK_CUBICSECURE_CONFIG_SENSORS,
-    PRESSURE_TEST_OUTCOME_LABELS,
 )
 from .restore import RestoredNativeValueMixin, last_successful_cloud_fetch_attributes
 
@@ -181,12 +176,6 @@ async def async_setup_entry(
 
                 cubic_entities.append(
                     LKLeakDetectionPausedUntilSensor(coordinator, device_identity)
-                )
-                cubic_entities.append(
-                    LKLastPressureTestSensor(coordinator, device_identity)
-                )
-                cubic_entities.append(
-                    LKLastPressureTestResultSensor(coordinator, device_identity)
                 )
                 cubic_entities.append(
                     LKNextUpdateDueSensor(coordinator, device_identity)
@@ -1099,100 +1088,6 @@ class LKLeakDetectionPausedUntilSensor(AbstractLkCubicSensor):
         return last_successful_cloud_fetch_attributes(
             self.coordinator.last_successful_cloud_fetch
         )
-
-
-class LKLastPressureTestSensor(AbstractLkCubicSensor):
-    """When the device's most recent automatic pressure test ran.
-
-    Populated by LKSystemCoordinator._schedule_pressure_test_result_check(),
-    not the regular poll - see that method's own docstring for why.
-    """
-
-    _attr_device_class = SensorDeviceClass.TIMESTAMP
-    _attr_icon = "mdi:history"
-
-    def __init__(self, coordinator: LKSystemCoordinator, device_identity: str) -> None:
-        """Initialize the sensor."""
-        description = SensorEntityDescription(
-            key="lastPressureTest",
-            name="Micro Leak Last Test",
-        )
-        super().__init__(
-            coordinator=coordinator,
-            description=description,
-            device_identity=device_identity,
-        )
-
-    def _live_native_value(self) -> datetime | None:
-        """Get the latest state value from the coordinator's live data."""
-        report = cubic_secure_latest_pressure_test_report(
-            self.coordinator, self._device_identity
-        )
-        if report is None:
-            return None
-        return dt_util.utc_from_timestamp(report["timestampStart"])
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose the last-successful-cloud-fetch timestamp, matching
-        every other cubic sensor - see restore.py for why it needs to
-        survive across a restart."""
-        return last_successful_cloud_fetch_attributes(
-            self.coordinator.last_successful_cloud_fetch
-        )
-
-
-class LKLastPressureTestResultSensor(AbstractLkCubicSensor):
-    """The outcome of the device's most recent automatic pressure test.
-
-    A plain string rather than an ENUM sensor deliberately - see
-    PRESSURE_TEST_OUTCOME_LABELS' own comment in const.py for why: only
-    5 outcome values have been observed in real account history, none of
-    them a detected leak, and HA's ENUM sensors error on any value
-    outside a fixed options list.
-    """
-
-    _attr_icon = "mdi:clipboard-check-outline"
-
-    def __init__(self, coordinator: LKSystemCoordinator, device_identity: str) -> None:
-        """Initialize the sensor."""
-        description = SensorEntityDescription(
-            key="lastPressureTestResult",
-            name="Micro Leak Last Test Result",
-        )
-        super().__init__(
-            coordinator=coordinator,
-            description=description,
-            device_identity=device_identity,
-        )
-
-    def _live_native_value(self) -> str | None:
-        """Get the latest state value from the coordinator's live data."""
-        report = cubic_secure_latest_pressure_test_report(
-            self.coordinator, self._device_identity
-        )
-        if report is None:
-            return None
-        outcome = report["outcome"]
-        return PRESSURE_TEST_OUTCOME_LABELS.get(outcome, outcome)
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose duration/pressure-delta alongside the outcome (only
-        meaningful, non-null values when the outcome is a completed
-        test - see LKPressureTestReport's own docstring), and the
-        last-successful-cloud-fetch timestamp matching every other
-        cubic sensor."""
-        attributes = last_successful_cloud_fetch_attributes(
-            self.coordinator.last_successful_cloud_fetch
-        )
-        report = cubic_secure_latest_pressure_test_report(
-            self.coordinator, self._device_identity
-        )
-        if report is not None:
-            attributes["duration_seconds"] = report.get("duration")
-            attributes["pressure_delta"] = report.get("pressureDelta")
-        return attributes
 
 
 class LKNextUpdateDueSensor(
