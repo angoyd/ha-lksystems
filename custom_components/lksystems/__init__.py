@@ -44,6 +44,9 @@ from .const import (
     LEAK_DETECTION_EXPIRY_RETRY_INTERVAL_SECONDS,
     LEAK_DETECTION_LOCAL_WRITE_GRACE_SECONDS,
     MANUFACTURER,
+    PRESSURE_TEST_RESULT_INITIAL_DELAY_SECONDS,
+    PRESSURE_TEST_RESULT_MAX_RETRY_SECONDS,
+    PRESSURE_TEST_RESULT_RETRY_INTERVAL_SECONDS,
     VALVE_ACTION_MAX_RETRY_SECONDS,
     VALVE_ACTION_RETRY_INTERVAL_SECONDS,
 )
@@ -111,6 +114,7 @@ class LkCubicDeviceData(TypedDict):
     machine_info: LkStructureMachine
     last_measurement: LkCubicSecureResp
     configuration: LKCubicSecureConfigResp
+    latest_pressure_test_report: "LKPressureTestReport | None"
 
 
 class LKCubicSecureConfigResp(TypedDict):
@@ -134,6 +138,24 @@ class LKPressureTestSchedule(TypedDict):
 
     hour: int
     minute: int
+
+
+class LKPressureTestReport(TypedDict):
+    """One pressure-test report, as
+    service/cubic/secure/{id}/pressure-test-reports/{bypass} returns it -
+    confirmed live against a real account's full report history.
+    duration/pressureDelta are only ever populated when outcome is
+    "successNoLeak"; every other observed outcome is the test not
+    running to completion this cycle, not a detected leak (see
+    PRESSURE_TEST_OUTCOME_LABELS' own comment in const.py)."""
+
+    deviceId: str
+    timestampStart: int
+    pressureStart: int
+    temperatureStart: float
+    outcome: str
+    duration: int | None
+    pressureDelta: int | None
 
 
 class LKLeakInfo(TypedDict):
@@ -249,6 +271,15 @@ def _round_to_nearest_minute(moment: datetime) -> datetime:
     return (moment + timedelta(seconds=30)).replace(second=0, microsecond=0)
 
 
+def _next_daily_occurrence(reference: datetime, hour: int, minute: int) -> datetime:
+    """Return the next wall-clock hour:minute at or after `reference` -
+    today's if it hasn't passed yet, tomorrow's otherwise."""
+    candidate = reference.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate <= reference:
+        candidate += timedelta(days=1)
+    return candidate
+
+
 def _fill_missing_keys(target: dict, fallback: dict) -> None:
     """Copy every key `fallback` has that `target` doesn't, into `target`.
 
@@ -327,6 +358,20 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         # _schedule_valve_state_confirmation() call, if any - see that
         # method's own docstring.
         self._valve_action_unsub: dict[str, CALLBACK_TYPE] = {}
+
+        # Cancel handle for each device's pending
+        # _schedule_pressure_test_result_check() call, if any, plus the
+        # target time it's currently scheduled against - the target lets
+        # _ensure_pressure_test_result_check_scheduled() detect a
+        # schedule change (via the Micro Leak Test Time entity) without
+        # re-scheduling on every single poll.
+        self._pressure_test_result_unsub: dict[str, CALLBACK_TYPE] = {}
+        self._pressure_test_result_check_target: dict[str, datetime] = {}
+
+        # Which devices _async_update_data() has already tried a one-off
+        # catch-up fetch for (see its own comment) - at most one attempt
+        # per device per coordinator lifetime, not one every poll.
+        self._pressure_test_report_catchup_attempted: set[str] = set()
 
         # One shared LKThresholdWriteCoordinator per device, created
         # lazily the first time any entity needs it - see
@@ -645,6 +690,135 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         if unsub := self._leak_detection_refresh_unsub.pop(device_identity, None):
             unsub()
 
+    def _ensure_pressure_test_result_check_scheduled(
+        self,
+        device_identity: str,
+        configuration: dict | None,
+        *,
+        reference: datetime | None = None,
+    ) -> None:
+        """(Re)align this device's next pressure-test-result check with
+        its currently configured schedule.
+
+        Called after every regular poll (once configuration - and so
+        pressureTestSchedule - is fresh), not just once: this is how a
+        schedule change made through the Micro Leak Test Time entity, or
+        a coordinator restart, re-syncs the next check without a
+        separate bootstrap path. A no-op if the computed target already
+        matches what's currently scheduled.
+
+        `reference` defaults to dt_util.now() - callers that already
+        know the relevant "now" (a check's own retarget once it's
+        resolved) pass it explicitly instead of a fresh clock read a
+        moment later, so the next target is always computed relative to
+        the check that triggered it.
+        """
+        schedule = (configuration or {}).get("pressureTestSchedule") or {}
+        hour, minute = schedule.get("hour"), schedule.get("minute")
+        if hour is None or minute is None:
+            return
+        target = _next_daily_occurrence(reference or dt_util.now(), hour, minute)
+        if self._pressure_test_result_check_target.get(device_identity) == target:
+            return
+        self._schedule_pressure_test_result_check(device_identity, target)
+
+    def _schedule_pressure_test_result_check(
+        self, device_identity: str, target: datetime
+    ) -> None:
+        """Poll for this device's pressure-test result starting shortly
+        after `target` (its scheduled test time), retrying every
+        PRESSURE_TEST_RESULT_RETRY_INTERVAL_SECONDS until a report
+        timestamped at or after `target` actually shows up - a scheduled
+        test can be postponed and retried by the device itself, so the
+        latest report seen right at the scheduled time is often still
+        yesterday's or an earlier retry. Gives up after
+        PRESSURE_TEST_RESULT_MAX_RETRY_SECONDS and re-aims at tomorrow's
+        occurrence instead.
+        """
+        self._cancel_pressure_test_result_check(device_identity)
+        self._pressure_test_result_check_target[device_identity] = target
+        retry_deadline = target + timedelta(
+            seconds=PRESSURE_TEST_RESULT_MAX_RETRY_SECONDS
+        )
+
+        def _track_at(when: datetime) -> None:
+            self._pressure_test_result_unsub[device_identity] = (
+                async_track_point_in_time(self.hass, _check, when)
+            )
+
+        async def _check(now: datetime) -> None:
+            self._pressure_test_result_unsub.pop(device_identity, None)
+            report = await self._fetch_latest_pressure_test_report(device_identity)
+            if report is not None and report["timestampStart"] >= target.timestamp():
+                self.data["cubic_devices"][device_identity][
+                    "latest_pressure_test_report"
+                ] = report
+                self.async_update_listeners()
+                self._retarget_pressure_test_result_check(device_identity, now)
+                return
+            if now >= retry_deadline:
+                _LOGGER.debug(
+                    "Giving up on today's pressure-test result for %s after %s - "
+                    "trying again at tomorrow's scheduled time",
+                    device_identity,
+                    now - target,
+                )
+                self._retarget_pressure_test_result_check(device_identity, now)
+                return
+            _track_at(
+                now + timedelta(seconds=PRESSURE_TEST_RESULT_RETRY_INTERVAL_SECONDS)
+            )
+
+        _track_at(target + timedelta(seconds=PRESSURE_TEST_RESULT_INITIAL_DELAY_SECONDS))
+
+    def _retarget_pressure_test_result_check(
+        self, device_identity: str, now: datetime
+    ) -> None:
+        """Re-arm the next pressure-test-result check for tomorrow's
+        occurrence of this device's (freshly re-read) schedule, once
+        today's check has either succeeded or given up. `now` is the
+        check's own reference time, not a fresh clock read - see
+        _ensure_pressure_test_result_check_scheduled()'s own docstring
+        for why."""
+        self._pressure_test_result_check_target.pop(device_identity, None)
+        configuration = self.data["cubic_devices"][device_identity].get(
+            "configuration"
+        )
+        self._ensure_pressure_test_result_check_scheduled(
+            device_identity, configuration, reference=now
+        )
+
+    def _cancel_pressure_test_result_check(self, device_identity: str) -> None:
+        """Cancel a device's pending pressure-test-result check, if one is scheduled."""
+        if unsub := self._pressure_test_result_unsub.pop(device_identity, None):
+            unsub()
+
+    async def _fetch_latest_pressure_test_report(
+        self, device_identity: str
+    ) -> dict | None:
+        """Fetch this device's most recent pressure-test report, opening
+        its own authenticated session - for the point-in-time check
+        _schedule_pressure_test_result_check() schedules around the
+        device's own configured test time, independent of the regular
+        poll.
+        """
+        try:
+            async with self._authenticated_client() as lk_inst:
+                if not await lk_inst.get_cubic_secure_pressure_test_reports(
+                    device_identity
+                ):
+                    return None
+        except _LoginFailed:
+            _LOGGER.error("Login failed when fetching pressure-test reports")
+            return None
+        except Exception as ex:
+            _LOGGER.error("Error fetching pressure-test reports: %s", ex)
+            return None
+        reports = (
+            lk_inst.cubic_secure_pressure_test_reports or {}
+        ).get("reports") or []
+        return reports[0] if reports else None
+
     def mark_valve_action_pending(
         self, device_identity: str, expect_closed: bool
     ) -> None:
@@ -814,15 +988,18 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
     async def async_shutdown(self) -> None:
         """Cancel any scheduled call, and ignore new runs.
 
-        Also cancels every pending leak-detection expiry check and
-        valve-state confirmation - they'd otherwise fire against a
-        torn-down coordinator after unload.
+        Also cancels every pending leak-detection expiry check,
+        valve-state confirmation, and pressure-test-result check -
+        they'd otherwise fire against a torn-down coordinator after
+        unload.
         """
         await super().async_shutdown()
         for device_identity in list(self._leak_detection_refresh_unsub):
             self._cancel_leak_detection_expiry_refresh(device_identity)
         for device_identity in list(self._valve_action_unsub):
             self._cancel_valve_action_confirmation(device_identity)
+        for device_identity in list(self._pressure_test_result_unsub):
+            self._cancel_pressure_test_result_check(device_identity)
         for write_coordinator in self._threshold_write_coordinators.values():
             write_coordinator.async_shutdown()
 
@@ -1016,6 +1193,47 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         else:
             self._consecutive_failures = 0
             repairs.async_clear_all_issues(self.hass, self._entry_id)
+            previous_devices = (self.data or {}).get("cubic_devices", {})
+            for device_identity, device in resp.get("cubic_devices", {}).items():
+                # _fetch_data() builds a fresh dict per device each poll,
+                # so without this a pressure-test result captured by
+                # _schedule_pressure_test_result_check()'s own check
+                # (outside the regular poll cycle) would be wiped out by
+                # the very next regular poll instead of persisting until
+                # the next actual test.
+                device.setdefault(
+                    "latest_pressure_test_report",
+                    previous_devices.get(device_identity, {}).get(
+                        "latest_pressure_test_report"
+                    ),
+                )
+                if (
+                    device.get("latest_pressure_test_report") is None
+                    and device_identity not in self._pressure_test_report_catchup_attempted
+                ):
+                    # Nothing captured yet this coordinator lifetime -
+                    # most commonly right after a restart, before
+                    # RestoreEntity's own snapshot has necessarily
+                    # survived (it's periodic/on-clean-shutdown, not
+                    # guaranteed fresh across every kind of restart).
+                    # The report history is durable on LK's cloud
+                    # regardless of what survived locally, so fetch it
+                    # directly instead of waiting up to a day for the
+                    # next scheduled check. Attempted at most once per
+                    # device per coordinator lifetime, not on every poll
+                    # - a device that's never actually run a test would
+                    # otherwise be re-fetched forever for nothing.
+                    self._pressure_test_report_catchup_attempted.add(
+                        device_identity
+                    )
+                    report = await self._fetch_latest_pressure_test_report(
+                        device_identity
+                    )
+                    if report is not None:
+                        device["latest_pressure_test_report"] = report
+                self._ensure_pressure_test_result_check_scheduled(
+                    device_identity, device.get("configuration")
+                )
             return resp
 
     def _register_failure(self) -> None:
@@ -1502,6 +1720,19 @@ def cubic_secure_thresholds(
     return cubic_secure_configuration(coordinator, device_identity).get(
         "thresholds"
     ) or {}
+
+
+def cubic_secure_latest_pressure_test_report(
+    coordinator: LKSystemCoordinator, device_identity: str
+) -> dict[str, Any] | None:
+    """Return a Cubic Secure device's most recently captured pressure-
+    test report, or None until the first one has been fetched.
+
+    Populated by _schedule_pressure_test_result_check()'s own point-in-
+    time check around the device's configured test time, not the
+    regular poll - see that method's own docstring for why."""
+    cubic_device = coordinator.data["cubic_devices"][device_identity]
+    return cubic_device.get("latest_pressure_test_report")
 
 
 def cubic_secure_device_info(
