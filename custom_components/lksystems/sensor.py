@@ -734,15 +734,6 @@ class LKArcSensorEntity(RestoredNativeValueMixin, CoordinatorEntity, RestoreSens
             self._device_identity,
         )
 
-        # Add explicit check for value changes
-        old_value = self._attr_native_value
-        new_value = self.native_value
-
-        if old_value != new_value:
-            _LOGGER.warning(
-                "Value changed for %s: %s -> %s", self._attr_name, old_value, new_value
-            )
-
         self.async_write_ha_state()
 
     @property
