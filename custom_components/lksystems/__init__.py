@@ -1564,6 +1564,9 @@ class CubicSecureEntityMixin:
         return cubic_secure_thresholds(self.coordinator, self._device_identity)
 
 
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the LK Systems component."""
     hass.data[DOMAIN] = {}
