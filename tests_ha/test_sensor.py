@@ -12,6 +12,7 @@ directly, so a bug in how sensor.py applies them would still show up.
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
 from homeassistant.const import EntityCategory
@@ -577,3 +578,24 @@ class TestArcSensorStateWrites:
             "next_cloud_fetch_attempt",
             "last_successful_cloud_fetch",
         } <= unrecorded
+class TestArcSensorCoordinatorUpdateLogging:
+    """A routine poll is not something to warn about. The Arc sensor used
+    to compare against an attribute it never assigned, so every poll
+    logged a "Value changed ... None -> <value>" warning per sensor even
+    when nothing changed."""
+
+    async def test_unchanged_poll_logs_no_warning(self, hass, fake_manager, caplog):
+        entry = await setup_entry(hass, fake_manager)
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="custom_components.lksystems.sensor"):
+            coordinator.async_update_listeners()
+            await hass.async_block_till_done()
+
+        assert not [
+            record
+            for record in caplog.records
+            if record.name == "custom_components.lksystems.sensor"
+            and record.levelno >= logging.WARNING
+        ]

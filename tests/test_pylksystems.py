@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from aiohttp import ClientConnectionError
 from aioresponses import aioresponses
+from yarl import URL
 
 import pylksystems
 
@@ -610,6 +611,45 @@ class TestSetDeviceTemperature:
         assert result is False
 
 
+class TestSetThermostatTemperature:
+    """set_thermostat_temperature() must use the documented Device Control
+    endpoint on the same API gateway as every other call. The host it
+    used to post to no longer resolves in DNS, so every setpoint change
+    failed with "Domain name not found"."""
+
+    ENDPOINT = BASE_URL + "control/arc/sense/AA:BB:CC/temperature"
+
+    async def test_posts_the_setpoint_to_the_device_control_endpoint(self, manager):
+        with aioresponses() as m:
+            m.post(self.ENDPOINT, payload={"temperature": 215}, status=200)
+            async with manager:
+                result = await manager.set_thermostat_temperature("AA:BB:CC", 215)
+
+            [request] = m.requests[("POST", URL(self.ENDPOINT))]
+
+        assert result["success"] is True
+        assert result["data"] == {"temperature": 215}
+        assert request.kwargs["json"] == {"temperature": 215}
+
+    async def test_error_status_is_reported_as_failure(self, manager):
+        with aioresponses() as m:
+            m.post(self.ENDPOINT, status=400)
+            async with manager:
+                result = await manager.set_thermostat_temperature("AA:BB:CC", 215)
+
+        assert result["success"] is False
+        assert result["error"]
+
+    async def test_rate_limited_setpoint_is_retried(self, manager, mock_sleep):
+        with aioresponses() as m:
+            m.post(self.ENDPOINT, status=429, headers={"Retry-After": "1"})
+            m.post(self.ENDPOINT, payload={"temperature": 215}, status=200)
+            async with manager:
+                result = await manager.set_thermostat_temperature("AA:BB:CC", 215)
+
+        assert result["success"] is True
+
+
 class TestHandleClientError:
     async def test_logs_the_exception_type_alongside_str(self, manager, caplog):
         """asyncio.TimeoutError's str() is '' by design - confirmed live,
@@ -652,7 +692,7 @@ class TestSensitiveDataNotLogged:
 
         with aioresponses() as m:
             m.post(
-                "https://lk-arc-structure-mapper.azurewebsites.net/api/measurement/sense",
+                BASE_URL + "control/arc/sense/AA:BB:CC/temperature",
                 payload={"currentTemperature": 210},
                 status=200,
             )
