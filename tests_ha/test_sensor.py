@@ -12,6 +12,7 @@ directly, so a bug in how sensor.py applies them would still show up.
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
 from homeassistant.const import EntityCategory
@@ -712,3 +713,56 @@ class TestArcHubRestore:
         await entity.async_added_to_hass()
 
         assert entity.native_value is None
+
+
+class TestArcSensorStateWrites:
+    """An Arc sensor's state should only be rewritten when something about
+    it actually changed, and the per-poll fetch timestamps shouldn't give
+    the recorder a new attribute set to store on every poll."""
+
+    async def test_listener_update_without_new_data_does_not_rewrite_state(
+        self, hass, fake_manager, freezer
+    ):
+        entry = await setup_entry(hass, fake_manager)
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+        sensor_id = entity_id(hass, "sensor", f"{DOMAIN}_{THERMOSTAT_MAC}_temperature")
+        before = hass.states.get(sensor_id)
+
+        freezer.tick(timedelta(seconds=30))
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+
+        assert hass.states.get(sensor_id).last_updated == before.last_updated
+
+    async def test_fetch_timestamps_are_not_recorded(self, hass, fake_manager):
+        await setup_entry(hass, fake_manager)
+        sensor_id = entity_id(hass, "sensor", f"{DOMAIN}_{THERMOSTAT_MAC}_temperature")
+
+        unrecorded = hass.states.get(sensor_id).state_info["unrecorded_attributes"]
+
+        assert {
+            "last_cloud_fetch_attempt",
+            "next_cloud_fetch_attempt",
+            "last_successful_cloud_fetch",
+        } <= unrecorded
+class TestArcSensorCoordinatorUpdateLogging:
+    """A routine poll is not something to warn about. The Arc sensor used
+    to compare against an attribute it never assigned, so every poll
+    logged a "Value changed ... None -> <value>" warning per sensor even
+    when nothing changed."""
+
+    async def test_unchanged_poll_logs_no_warning(self, hass, fake_manager, caplog):
+        entry = await setup_entry(hass, fake_manager)
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="custom_components.lksystems.sensor"):
+            coordinator.async_update_listeners()
+            await hass.async_block_till_done()
+
+        assert not [
+            record
+            for record in caplog.records
+            if record.name == "custom_components.lksystems.sensor"
+            and record.levelno >= logging.WARNING
+        ]
