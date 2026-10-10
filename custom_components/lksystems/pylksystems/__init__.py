@@ -147,7 +147,6 @@ def _device_from_machine(machine, cache_updated):
     return device_data
 
 
-# Add the missing LKSystemsError class
 class LKSystemsError(Exception):
     """Exception raised for LK Systems related errors."""
 
@@ -155,9 +154,14 @@ class LKSystemsError(Exception):
 
 
 class InvalidAuth(LKSystemsError):
-    """Exception raised for authentication errors."""
+    """Raised when LK Systems rejects the login credentials themselves (a
+    401 on the login request).
 
-    pass
+    Deliberately not raised for any other login-flow failure - a
+    connection error, a timeout, or the follow-up userid lookup failing -
+    none of those prove the password is wrong, so login() returns False
+    for them instead, leaving it to the caller to treat as transient.
+    """
 
 
 class LKLeakThresholds(TypedDict):
@@ -462,7 +466,7 @@ class LKSystemsManager:
                     _LOGGER.error(
                         "Unauthorized: Check your LK Systems authentication credentials"
                     )
-                    return False
+                    raise InvalidAuth("LK Systems rejected the provided credentials")
 
                 _LOGGER.error("Unexpected HTTP status code: %s", response.status)
                 return False
