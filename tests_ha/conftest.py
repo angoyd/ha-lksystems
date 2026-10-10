@@ -28,6 +28,7 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.lksystems.const import DOMAIN
+from custom_components.lksystems.pylksystems import InvalidAuth
 
 pytest_plugins = "pytest_homeassistant_custom_component"
 
@@ -119,6 +120,13 @@ class FakeLKSystemsManager:
 
         # Configurable outcomes for each call, so tests can force failures.
         self.login_result = True
+        # When True, login() raises InvalidAuth instead of returning
+        # login_result - simulates LK Systems rejecting the credentials
+        # outright (a 401 on the login request itself), as opposed to
+        # login_result = False, which simulates every other login-flow
+        # failure (connection errors, a failed userid lookup) that don't
+        # prove the password is wrong.
+        self.login_raises_invalid_auth = False
         self.get_user_structure_result = True
         self.get_device_measurement_result = True
         self.get_device_configuration_result = True
@@ -127,6 +135,7 @@ class FakeLKSystemsManager:
         self.get_cubic_secure_configuration_result = True
         self.cubic_secure_set_thresholds_result = True
         self.get_cubic_secure_pressure_test_reports_result = True
+        self.cubic_secure_set_pressure_test_schedule_result = True
         # Simulates a real fetch taking a while - e.g. pylksystems
         # honoring a long Retry-After from LK's own rate limiter, which
         # can take tens of seconds on a real device (confirmed live).
@@ -153,6 +162,8 @@ class FakeLKSystemsManager:
 
     async def login(self):
         self.calls.append(("login",))
+        if self.login_raises_invalid_auth:
+            raise InvalidAuth("LK Systems rejected the provided credentials")
         if self.login_result:
             self.jwt_token = "fake-jwt-token"
             self.refresh_token = "fake-refresh-token"
@@ -256,6 +267,14 @@ class FakeLKSystemsManager:
         self.calls.append(
             ("cubic_secure_set_pressure_test_schedule", cubic_identity, hour, minute)
         )
+        if self.cubic_secure_set_pressure_test_schedule_result:
+            current = self.cubic_configurations_by_device.get(
+                cubic_identity, self.cubic_configuration_data
+            )
+            updated = {**current, "pressureTestSchedule": {"hour": hour, "minute": minute}}
+            self.cubic_configurations_by_device[cubic_identity] = updated
+            self.cubic_configurations_cached_by_device[cubic_identity] = updated
+        return self.cubic_secure_set_pressure_test_schedule_result
 
     async def cubic_secure_set_thresholds(self, cubic_identity, thresholds):
         self.calls.append(("cubic_secure_set_thresholds", cubic_identity, thresholds))

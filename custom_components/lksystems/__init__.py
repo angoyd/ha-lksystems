@@ -17,7 +17,7 @@ try:
 except ImportError:
     jwt = None
 
-from homeassistant.exceptions import HomeAssistantError, ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
@@ -53,6 +53,7 @@ from .const import (
 from .pylksystems import (
     LKSystemsManager,
     LKSystemsError,
+    InvalidAuth,
     LKThresholds,
     LKPressureThresholds,
     iter_realestate_machines,
@@ -79,6 +80,7 @@ PLATFORMS = [
     Platform.BUTTON,
     Platform.VALVE,
     Platform.SWITCH,
+    Platform.TIME,
 ]
 
 
@@ -1314,7 +1316,9 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                     _LOGGER.info("No valid token, performing full login")
                     if not await lk_inst.login():
                         _LOGGER.error("Login failed")
-                        raise ConfigEntryAuthFailed("Authentication failed")
+                        raise UpdateFailed(
+                            "Login failed, possibly transient - will retry"
+                        )
 
                     # Store the new tokens
                     TOKEN_STORAGE[self._entry_id] = {
@@ -1722,6 +1726,26 @@ def cubic_secure_thresholds(
     ) or {}
 
 
+def cubic_secure_pressure_test_schedule(
+    coordinator: LKSystemCoordinator, device_identity: str
+) -> dict[str, Any] | None:
+    """Return a Cubic Secure device's currently configured pressure-test
+    schedule ({"hour": int, "minute": int}), or None until the first
+    successful configuration fetch.
+
+    Read off the regular configuration poll rather than a separate
+    control-endpoint fetch: confirmed empirically against a real device
+    that pressureTestSchedule is server-side-tracked like muteLeak or
+    thresholds - a write already lands in this cached field within the
+    same poll cycle, so there's no separate live/cached distinction to
+    track for it (see set_pressure_test_schedule_for_serial's own
+    docstring for the write side of this).
+    """
+    return cubic_secure_configuration(coordinator, device_identity).get(
+        "pressureTestSchedule"
+    )
+
+
 def cubic_secure_latest_pressure_test_report(
     coordinator: LKSystemCoordinator, device_identity: str
 ) -> dict[str, Any] | None:
@@ -1898,19 +1922,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
-
-
-class LksystemsError(HomeAssistantError):
-    """Base error."""
-
-
-class InvalidAuth(LksystemsError):
-    """Raised when invalid authentication credentials are provided."""
-
-
-class APIRatelimitExceeded(LksystemsError):
-    """Raised when the API rate limit is exceeded."""
-
-
-class UnknownError(LksystemsError):
-    """Raised when an unknown error occurs."""
