@@ -38,7 +38,11 @@ from .const import (
     LK_CUBICSECURE_SENSORS,
     LK_CUBICSECURE_CONFIG_SENSORS,
 )
-from .restore import RestoredNativeValueMixin, last_successful_cloud_fetch_attributes
+from .restore import (
+    ATTR_LAST_SUCCESSFUL_CLOUD_FETCH,
+    RestoredNativeValueMixin,
+    last_successful_cloud_fetch_attributes,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -451,6 +455,11 @@ class LKArcSensorEntity(RestoredNativeValueMixin, CoordinatorEntity, RestoreSens
     """Representation of an LK Systems sensor entity."""
 
     _attr_has_entity_name = True
+    # These change on every poll; recording them would give the recorder a
+    # new attribute set to store for every sensor every poll.
+    _unrecorded_attributes = frozenset(
+        {C_UPDATE_TIME, C_NEXT_UPDATE_TIME, ATTR_LAST_SUCCESSFUL_CLOUD_FETCH}
+    )
 
     def __init__(
         self,
@@ -734,15 +743,6 @@ class LKArcSensorEntity(RestoredNativeValueMixin, CoordinatorEntity, RestoreSens
             self._device_identity,
         )
 
-        # Add explicit check for value changes
-        old_value = self._attr_native_value
-        new_value = self.native_value
-
-        if old_value != new_value:
-            _LOGGER.warning(
-                "Value changed for %s: %s -> %s", self._attr_name, old_value, new_value
-            )
-
         self.async_write_ha_state()
 
     @property
@@ -758,7 +758,7 @@ class LKArcSensorEntity(RestoredNativeValueMixin, CoordinatorEntity, RestoreSens
 
         # Add last update time
         if self.coordinator and hasattr(self.coordinator, "_last_cloud_fetch_attempt"):
-            attrs["last_cloud_fetch_attempt"] = (
+            attrs[C_UPDATE_TIME] = (
                 self.coordinator._last_cloud_fetch_attempt.isoformat()
             )
 
@@ -772,10 +772,7 @@ class LKArcSensorEntity(RestoredNativeValueMixin, CoordinatorEntity, RestoreSens
                 self.coordinator._last_cloud_fetch_attempt
                 + self.coordinator.update_interval
             )
-            attrs["next_cloud_fetch_attempt"] = next_cloud_fetch_attempt.isoformat()
-
-        # Add refresh button attribute with a timestamp to force UI refresh
-        attrs["refresh_timestamp"] = dt_util.now().timestamp()
+            attrs[C_NEXT_UPDATE_TIME] = next_cloud_fetch_attempt.isoformat()
 
         attrs.update(
             last_successful_cloud_fetch_attributes(
