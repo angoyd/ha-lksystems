@@ -28,7 +28,6 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.lksystems.const import DOMAIN
-from custom_components.lksystems.pylksystems import InvalidAuth
 
 pytest_plugins = "pytest_homeassistant_custom_component"
 
@@ -115,13 +114,6 @@ class FakeLKSystemsManager:
 
         # Configurable outcomes for each call, so tests can force failures.
         self.login_result = True
-        # When True, login() raises InvalidAuth instead of returning
-        # login_result - simulates LK Systems rejecting the credentials
-        # outright (a 401 on the login request itself), as opposed to
-        # login_result = False, which simulates every other login-flow
-        # failure (connection errors, a failed userid lookup) that don't
-        # prove the password is wrong.
-        self.login_raises_invalid_auth = False
         self.get_user_structure_result = True
         self.get_device_measurement_result = True
         self.get_device_configuration_result = True
@@ -155,8 +147,6 @@ class FakeLKSystemsManager:
 
     async def login(self):
         self.calls.append(("login",))
-        if self.login_raises_invalid_auth:
-            raise InvalidAuth("LK Systems rejected the provided credentials")
         if self.login_result:
             self.jwt_token = "fake-jwt-token"
             self.refresh_token = "fake-refresh-token"

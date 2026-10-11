@@ -238,23 +238,8 @@ class TestAsyncUpdateData:
         with pytest.raises(ConfigEntryAuthFailed):
             await coordinator._async_update_data()
 
-    async def test_transient_login_failure_raises_update_failed(
-        self, hass, fake_manager
-    ):
-        # login_result = False simulates every login-flow failure other
-        # than a genuine credential rejection (connection errors, a failed
-        # userid lookup) - none of those prove the password is wrong, so
-        # they shouldn't force the user through a reauth prompt.
+    async def test_login_failure_raises_auth_failed(self, hass, fake_manager):
         fake_manager.login_result = False
-        entry = _make_entry(hass)
-        coordinator = LKSystemCoordinator(hass, entry)
-
-        with _patch_manager(fake_manager):
-            with pytest.raises(UpdateFailed):
-                await coordinator._async_update_data()
-
-    async def test_credential_rejection_raises_auth_failed(self, hass, fake_manager):
-        fake_manager.login_raises_invalid_auth = True
         entry = _make_entry(hass)
         coordinator = LKSystemCoordinator(hass, entry)
 
