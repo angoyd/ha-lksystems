@@ -231,6 +231,43 @@ async def set_thresholds_for_serial(
         return ThresholdWriteResult(False)
 
 
+async def set_pressure_test_schedule_for_serial(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    serial_number: str,
+    hour: int,
+    minute: int,
+) -> bool:
+    """Log in, write one device's pressure-test schedule, and confirm the
+    write by refreshing configuration with the same session.
+
+    Uses the cached confirmation read (force_update=False), not the
+    bypass one valve writes use: confirmed empirically against a real
+    device that pressureTestSchedule is server-side-tracked like
+    muteLeak or thresholds, so the cache already reflects a write
+    immediately - see refresh_cubic_secure_configuration()'s own
+    docstring.
+    """
+    _LOGGER.info("Setting pressure test schedule for %s to %d:%02d", serial_number, hour, minute)
+    try:
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+
+        async with _service_write_session(entry) as lk_inst:
+            success = await lk_inst.cubic_secure_set_pressure_test_schedule(
+                serial_number, hour, minute
+            )
+            if success:
+                await coordinator.refresh_cubic_secure_configuration_with_client(
+                    lk_inst, serial_number
+                )
+            return success
+    except _ServiceLoginFailed:
+        return False
+    except Exception as e:
+        _LOGGER.error("Error setting pressure test schedule: %s", e)
+        return False
+
+
 async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
     @callback
     async def pause_leak_detection(call: ServiceCall) -> None:
@@ -269,12 +306,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         sn = _get_serial_number(hass, device_id)
         if not sn:
             return
-        _LOGGER.info(f"Setting pressure test schedule {sn} to {hour}:{minute}")
-        try:
-            async with _service_write_session(entry) as lk_inst:
-                await lk_inst.cubic_secure_set_pressure_test_schedule(sn, hour, minute)
-        except Exception as e:
-            _LOGGER.error("Error setting pressure test schedule: %s", e)
+        await set_pressure_test_schedule_for_serial(hass, entry, sn, hour, minute)
 
     @callback
     async def set_thresholds(call: ServiceCall) -> None:
