@@ -121,6 +121,7 @@ class FakeLKSystemsManager:
         self.get_cubic_secure_measurement_result = True
         self.get_cubic_secure_configuration_result = True
         self.cubic_secure_set_thresholds_result = True
+        self.cubic_secure_set_pressure_test_schedule_result = True
         # Simulates a real fetch taking a while - e.g. pylksystems
         # honoring a long Retry-After from LK's own rate limiter, which
         # can take tens of seconds on a real device (confirmed live).
@@ -240,6 +241,14 @@ class FakeLKSystemsManager:
         self.calls.append(
             ("cubic_secure_set_pressure_test_schedule", cubic_identity, hour, minute)
         )
+        if self.cubic_secure_set_pressure_test_schedule_result:
+            current = self.cubic_configurations_by_device.get(
+                cubic_identity, self.cubic_configuration_data
+            )
+            updated = {**current, "pressureTestSchedule": {"hour": hour, "minute": minute}}
+            self.cubic_configurations_by_device[cubic_identity] = updated
+            self.cubic_configurations_cached_by_device[cubic_identity] = updated
+        return self.cubic_secure_set_pressure_test_schedule_result
 
     async def cubic_secure_set_thresholds(self, cubic_identity, thresholds):
         self.calls.append(("cubic_secure_set_thresholds", cubic_identity, thresholds))
@@ -569,7 +578,10 @@ def build_thresholds(
 
 
 def build_cubic_configuration(
-    valve_state: str = "open", mute_leak: int = 0, thresholds: dict | None = None
+    valve_state: str = "open",
+    mute_leak: int = 0,
+    thresholds: dict | None = None,
+    pressure_test_schedule: dict | None = None,
 ) -> dict:
     return {
         "cacheUpdated": int(time.time()),
@@ -578,6 +590,11 @@ def build_cubic_configuration(
         "hardwareVersion": 4,
         "muteLeak": mute_leak,
         "thresholds": thresholds if thresholds is not None else build_thresholds(),
+        "pressureTestSchedule": (
+            pressure_test_schedule
+            if pressure_test_schedule is not None
+            else {"hour": 4, "minute": 0}
+        ),
     }
 
 
