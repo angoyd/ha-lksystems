@@ -200,7 +200,7 @@ async def test_login_failure_during_setup_starts_a_reauth_flow_for_this_entry(
     prompt, not just a background flow nothing points at - which needs the
     started flow's context to carry this entry's own entry_id, the same
     way HA's own ConfigEntry.async_start_reauth() does it."""
-    fake_manager.login_result = False
+    fake_manager.login_raises_invalid_auth = True
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={CONF_USERNAME: "user@example.com", CONF_PASSWORD: "hunter2"},
