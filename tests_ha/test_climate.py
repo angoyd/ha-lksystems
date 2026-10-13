@@ -161,3 +161,61 @@ class TestThermostatHasEntityName:
         state = hass.states.get(climate_entity_id)
 
         assert state.attributes["friendly_name"] == "LK Living Room"
+
+
+def _hvac_action(hass) -> str:
+    return hass.states.get(
+        entity_id(hass, "climate", f"{DOMAIN}_{THERMOSTAT_MAC}_thermostat")
+    ).attributes["hvac_action"]
+
+
+class TestThermostatHvacAction:
+    """hvac_action follows the room's actuators when they are reported:
+    heating while any is open, idle while all are closed. Without
+    actuator data it compares the current and target temperatures."""
+
+    async def test_heating_while_an_actuator_is_open_even_above_the_target(
+        self, hass, fake_manager
+    ):
+        measurement = fake_manager.measurements_by_device[THERMOSTAT_MAC]
+        measurement["currentTemperature"] = 230
+        measurement["desiredTemperature"] = 215
+        measurement["actuators"] = [{"n": 7, "s": 0}, {"n": 9, "s": 1}]
+
+        await setup_entry(hass, fake_manager)
+
+        assert _hvac_action(hass) == "heating"
+
+    async def test_idle_while_all_actuators_are_closed_even_below_the_target(
+        self, hass, fake_manager
+    ):
+        measurement = fake_manager.measurements_by_device[THERMOSTAT_MAC]
+        measurement["currentTemperature"] = 190
+        measurement["desiredTemperature"] = 215
+        measurement["actuators"] = [{"n": 7, "s": 0}, {"n": 9, "s": 0}]
+
+        await setup_entry(hass, fake_manager)
+
+        assert _hvac_action(hass) == "idle"
+
+    async def test_without_actuators_heating_when_below_the_target(
+        self, hass, fake_manager
+    ):
+        measurement = fake_manager.measurements_by_device[THERMOSTAT_MAC]
+        measurement["currentTemperature"] = 190
+        measurement["desiredTemperature"] = 215
+
+        await setup_entry(hass, fake_manager)
+
+        assert _hvac_action(hass) == "heating"
+
+    async def test_without_actuators_idle_when_at_or_above_the_target(
+        self, hass, fake_manager
+    ):
+        measurement = fake_manager.measurements_by_device[THERMOSTAT_MAC]
+        measurement["currentTemperature"] = 215
+        measurement["desiredTemperature"] = 215
+
+        await setup_entry(hass, fake_manager)
+
+        assert _hvac_action(hass) == "idle"

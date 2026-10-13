@@ -1478,6 +1478,22 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             raise UpdateFailed(str(err)) from err
 
 
+def arc_device_actuators(coordinator: LKSystemCoordinator, mac: str) -> list[dict]:
+    """Return the actuators ({"n": number, "s": state}) an Arc sense device
+    reports in its last measurement - empty if it reports none.
+
+    The same device can appear more than once in the devices list, so the
+    first entry that actually reports actuators wins.
+    """
+    for device in coordinator.data.get("devices", []):
+        if device.get("mac") != mac:
+            continue
+        actuators = (device.get("measurement") or {}).get("actuators")
+        if actuators:
+            return actuators
+    return []
+
+
 def cubic_secure_device_identities(coordinator: LKSystemCoordinator) -> list[str]:
     """Return the device identities of every Cubic Secure device on the account."""
     return list(coordinator.data.get("cubic_devices", {}))
