@@ -115,7 +115,7 @@ from homeassistant.helpers import entity_registry as er
 
 from custom_components.lksystems.const import DOMAIN
 
-from .conftest import THERMOSTAT_MAC, entity_id, setup_entry
+from .conftest import SENSOR_MAC, THERMOSTAT_MAC, entity_id, setup_entry
 
 
 class TestThermostatHasEntityName:
@@ -161,3 +161,36 @@ class TestThermostatHasEntityName:
         state = hass.states.get(climate_entity_id)
 
         assert state.attributes["friendly_name"] == "LK Living Room"
+
+
+def _set_device_role(manager, mac: str, role: str) -> None:
+    for realestate in manager.user_structure:
+        for machine in realestate["realestateMachines"]:
+            if machine["identity"] == mac:
+                machine["deviceRole"] = role
+
+
+class TestThermostatDeviceRole:
+    """Some accounts report a room thermostat's deviceRole as "arc-sense"
+    rather than "arc-tune"; it must still get a climate entity."""
+
+    async def test_arc_sense_role_with_a_target_temperature_gets_a_thermostat(
+        self, hass, fake_manager
+    ):
+        _set_device_role(fake_manager, THERMOSTAT_MAC, "arc-sense")
+
+        await setup_entry(hass, fake_manager)
+
+        assert entity_id(hass, "climate", f"{DOMAIN}_{THERMOSTAT_MAC}_thermostat")
+
+    async def test_arc_node_role_gets_no_thermostat(self, hass, fake_manager):
+        _set_device_role(fake_manager, THERMOSTAT_MAC, "arc-node")
+
+        await setup_entry(hass, fake_manager)
+
+        assert (
+            er.async_get(hass).async_get_entity_id(
+                "climate", DOMAIN, f"{DOMAIN}_{THERMOSTAT_MAC}_thermostat"
+            )
+            is None
+        )

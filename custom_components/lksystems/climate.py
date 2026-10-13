@@ -31,6 +31,9 @@ from .restore import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Accounts differ in what deviceRole they report for a room thermostat.
+THERMOSTAT_DEVICE_ROLES = ("arc-tune", "arc-sense")
+
 @dataclass
 class LKClimateEntityDescription(ClimateEntityDescription):
     """Description for LK Systems climate entities."""
@@ -54,10 +57,10 @@ async def async_setup_entry(
             device_title = device["deviceTitle"]
             device_mac = device.get("mac")
             
-            # Check if this is a thermostat device (arc-sense with arc-tune role)
+            # Check if this is a thermostat device
             if (device_title.get("deviceGroup") == "arc" and 
                 device_title.get("deviceType") == "arc-sense" and 
-                device_title.get("deviceRole") == "arc-tune" and
+                device_title.get("deviceRole") in THERMOSTAT_DEVICE_ROLES and
                 device_mac and device_mac not in processed_devices):
                 
                 processed_devices.add(device_mac)
@@ -85,7 +88,7 @@ async def async_setup_entry(
                     # Check if this is a thermostat device
                     if (device_title.get("deviceGroup") == "arc" and 
                         device_title.get("deviceType") == "arc-sense" and 
-                        device_title.get("deviceRole") == "arc-tune"):
+                        device_title.get("deviceRole") in THERMOSTAT_DEVICE_ROLES):
                         
                         processed_devices.add(device_mac)
                         
