@@ -80,8 +80,8 @@ class LKActuatorBinarySensor(CoordinatorEntity[LKSystemCoordinator], BinarySenso
     """Whether one actuator (valve) behind a room's thermostat is open.
 
     The API reports each actuator as {"n": <number>, "s": <state>} without
-    documenting the state values; 1 is read as open and 0 as closed, which
-    matches the thermostat calling for heat in the data seen so far.
+    documenting the state values; 1 meaning open and 0 closed was confirmed
+    by comparing against the LK app.
     """
 
     _attr_has_entity_name = True
