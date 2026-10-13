@@ -21,7 +21,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import LKSystemCoordinator
+from . import LKSystemCoordinator, arc_device_actuators
 from .const import DOMAIN, INTEGRATION_NAME
 from .restore import (
     is_restored_value_fresh,
@@ -293,17 +293,25 @@ class LKThermostat(CoordinatorEntity, RestoreEntity, ClimateEntity):
     
     @property
     def hvac_action(self) -> Optional[HVACAction]:
-        """Return the current HVAC action."""
-        # We would need more data to determine if the system is actively heating
-        # For now, we just return HEATING if the current temperature is below the target
+        """Return the current HVAC action.
+
+        Heating while any of the room's actuators is open and idle while
+        all are closed. A room that reports no actuators falls back to
+        comparing the current and target temperatures.
+        """
+        actuators = arc_device_actuators(self.coordinator, self._device.get("mac"))
+        if actuators:
+            if any(actuator.get("s") == 1 for actuator in actuators):
+                return HVACAction.HEATING
+            return HVACAction.IDLE
+
         current_temp = self.current_temperature
         target_temp = self.target_temperature
-        
+
         if current_temp is not None and target_temp is not None:
             if current_temp < target_temp:
                 return HVACAction.HEATING
-            else:
-                return HVACAction.IDLE
+            return HVACAction.IDLE
 
         return None
 
