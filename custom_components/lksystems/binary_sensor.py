@@ -9,6 +9,7 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -25,6 +26,21 @@ async def async_setup_entry(
         LKRateLimitedBinarySensor(coordinator, device_identity)
         for device_identity in cubic_secure_device_identities(coordinator)
     )
+    async_add_entities(
+        LKActuatorBinarySensor(coordinator, device, actuator["n"])
+        for device in _arc_devices_with_actuators(coordinator)
+        for actuator in device["measurement"]["actuators"]
+    )
+
+
+def _arc_devices_with_actuators(coordinator: LKSystemCoordinator) -> list[dict]:
+    """Return each Arc sense device that reports actuators, once."""
+    devices_by_mac: dict[str, dict] = {}
+    for device in coordinator.data.get("devices", []):
+        mac = device.get("mac")
+        if mac and (device.get("measurement") or {}).get("actuators"):
+            devices_by_mac.setdefault(mac, device)
+    return list(devices_by_mac.values())
 
 
 class LKRateLimitedBinarySensor(
@@ -58,3 +74,55 @@ class LKRateLimitedBinarySensor(
     def is_on(self) -> bool:
         """Return whether a threshold write is currently blocked."""
         return self._write_coordinator.is_blocked
+
+
+class LKActuatorBinarySensor(CoordinatorEntity[LKSystemCoordinator], BinarySensorEntity):
+    """Whether one actuator (valve) behind a room's thermostat is open.
+
+    The API reports each actuator as {"n": <number>, "s": <state>} without
+    documenting the state values; 1 is read as open and 0 as closed, which
+    matches the thermostat calling for heat in the data seen so far.
+    """
+
+    _attr_has_entity_name = True
+    _attr_device_class = BinarySensorDeviceClass.OPENING
+
+    def __init__(
+        self, coordinator: LKSystemCoordinator, device: dict, actuator_number: int
+    ) -> None:
+        """Initialize the binary sensor."""
+        super().__init__(coordinator)
+        device_title = device.get("deviceTitle", {})
+        self._mac = device["mac"]
+        self._actuator_number = actuator_number
+        device_identity = device_title.get("identity") or self._mac
+        zone_name = device_title.get("zone", {}).get("zoneName", "Unknown Zone")
+        self._attr_unique_id = f"LkUid_actuator_{device_identity}_{actuator_number}"
+        self._attr_name = f"Actuator {actuator_number}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, device_identity)},
+            name=f"LK {zone_name}",
+            manufacturer="LK Systems",
+            model=device_title.get("deviceType", "unknown"),
+        )
+
+    def _actuator_state(self) -> int | None:
+        """Return this actuator's reported state, or None if it isn't reported."""
+        for device in self.coordinator.data.get("devices", []):
+            if device.get("mac") != self._mac:
+                continue
+            for actuator in (device.get("measurement") or {}).get("actuators") or []:
+                if actuator.get("n") == self._actuator_number:
+                    return actuator.get("s")
+        return None
+
+    @property
+    def available(self) -> bool:
+        """Return whether the actuator's state is currently reported."""
+        return super().available and self._actuator_state() is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return whether the actuator is open."""
+        state = self._actuator_state()
+        return None if state is None else state == 1

@@ -18,7 +18,14 @@ from homeassistant.helpers import entity_registry as er
 from custom_components.lksystems.const import DOMAIN
 from custom_components.lksystems.threshold_writes import LKThresholdWriteCoordinator
 
-from .conftest import CUBIC_IDENTITY, entity_id, patch_all_managers, setup_entry
+from .conftest import (
+    CUBIC_IDENTITY,
+    SENSOR_MAC,
+    THERMOSTAT_MAC,
+    entity_id,
+    patch_all_managers,
+    setup_entry,
+)
 
 TINY_TIMING = patch.multiple(
     LKThresholdWriteCoordinator, DEBOUNCE_SECONDS=0.01, FALLBACK_RETRY_SECONDS=0.01
@@ -159,3 +166,84 @@ async def test_recovers_immediately_once_a_poll_succeeds_again(hass, fake_manage
         await coordinator.async_refresh()
 
     assert hass.states.get(rate_limited_entity_id).state != "unavailable"
+
+
+def _actuator_unique_id(device_identity: str, actuator_number: int) -> str:
+    return f"LkUid_actuator_{device_identity}_{actuator_number}"
+
+
+def _give_actuators(manager, mac: str, actuators: list[dict]) -> None:
+    manager.measurements_by_device[mac]["actuators"] = actuators
+
+
+class TestActuatorBinarySensors:
+    """One binary sensor per actuator a room thermostat controls: on when
+    the actuator reports state 1 (open), off for 0 (closed)."""
+
+    async def test_creates_one_sensor_per_actuator_with_its_state(
+        self, hass, fake_manager
+    ):
+        _give_actuators(
+            fake_manager, THERMOSTAT_MAC, [{"n": 7, "s": 0}, {"n": 9, "s": 1}]
+        )
+
+        await setup_entry(hass, fake_manager)
+
+        closed = hass.states.get(
+            entity_id(hass, "binary_sensor", _actuator_unique_id(THERMOSTAT_MAC, 7))
+        )
+        open_ = hass.states.get(
+            entity_id(hass, "binary_sensor", _actuator_unique_id(THERMOSTAT_MAC, 9))
+        )
+        assert (closed.state, open_.state) == ("off", "on")
+
+    async def test_is_an_opening_sensor_named_after_the_actuator(
+        self, hass, fake_manager
+    ):
+        _give_actuators(fake_manager, THERMOSTAT_MAC, [{"n": 7, "s": 1}])
+
+        await setup_entry(hass, fake_manager)
+
+        state = hass.states.get(
+            entity_id(hass, "binary_sensor", _actuator_unique_id(THERMOSTAT_MAC, 7))
+        )
+        assert state.attributes["device_class"] == "opening"
+        assert state.attributes["friendly_name"].endswith("Actuator 7")
+
+    async def test_belongs_to_the_room_device(self, hass, fake_manager):
+        _give_actuators(fake_manager, THERMOSTAT_MAC, [{"n": 7, "s": 1}])
+
+        await setup_entry(hass, fake_manager)
+
+        registry_entry = er.async_get(hass).async_get(
+            entity_id(hass, "binary_sensor", _actuator_unique_id(THERMOSTAT_MAC, 7))
+        )
+        device = dr.async_get(hass).async_get_device(
+            identifiers={(DOMAIN, THERMOSTAT_MAC)}
+        )
+        assert registry_entry.device_id == device.id
+
+    async def test_device_without_actuators_gets_no_sensors(self, hass, fake_manager):
+        await setup_entry(hass, fake_manager)
+
+        assert [
+            entry
+            for entry in er.async_get(hass).entities.values()
+            if entry.unique_id.startswith(f"LkUid_actuator_{SENSOR_MAC}")
+        ] == []
+
+    async def test_follows_the_actuator_state_on_the_next_poll(
+        self, hass, fake_manager
+    ):
+        _give_actuators(fake_manager, THERMOSTAT_MAC, [{"n": 7, "s": 0}])
+        entry = await setup_entry(hass, fake_manager)
+        sensor_id = entity_id(
+            hass, "binary_sensor", _actuator_unique_id(THERMOSTAT_MAC, 7)
+        )
+
+        _give_actuators(fake_manager, THERMOSTAT_MAC, [{"n": 7, "s": 1}])
+        with patch_all_managers(fake_manager):
+            await hass.data[DOMAIN][entry.entry_id].async_refresh()
+        await hass.async_block_till_done()
+
+        assert hass.states.get(sensor_id).state == "on"
