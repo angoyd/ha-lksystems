@@ -20,6 +20,7 @@ The integration supports:
 - Automatic heat control (HVAC mode: Heat)
 - Displays current room temperature and target temperature
 - Heat status indication (Heating/Idle based on current vs target temperature)
+- One open/closed sensor per actuator (valve) behind each room's thermostat
 - Organized by zones for easy management
 - Integrated with Home Assistant's climate controls
 
