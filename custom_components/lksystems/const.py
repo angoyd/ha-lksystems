@@ -9,7 +9,13 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import EntityCategory, UnitOfPressure, UnitOfTime
+from homeassistant.const import (
+    EntityCategory,
+    PERCENTAGE,
+    UnitOfElectricPotential,
+    UnitOfPressure,
+    UnitOfTime,
+)
 
 DOMAIN = "lksystems"
 INTEGRATION_NAME = "LK Systems"
@@ -20,6 +26,7 @@ C_NEXT_UPDATE_TIME = "next_cloud_fetch_attempt"
 C_UPDATE_TIME = "last_cloud_fetch_attempt"
 
 CUBIC_SECURE_MODEL = "Cubic Secure"
+CUBIC_DETECTOR_MODEL = "Cubic Detector"
 
 # LK systems Sensor Attributes
 # NOTE Keep these names aligned with strings.json
@@ -265,6 +272,147 @@ LK_CUBICSECURE_CONFIG_SENSORS: dict[str, SensorEntityDescription] = {
         native_unit_of_measurement=None,
         state_class=None,
         translation_key="hardware_version_sensor",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+}
+
+# A Cubic Detector is a battery-powered, valve-less leak/moisture sensor -
+# unlike Cubic Secure it has no water volume, pressure, or temperature
+# measurement, but adds its own battery/humidity readings (confirmed
+# against DetectorMeasurements in the real API spec via the lk-api-spec
+# skill, cross-checked against a real paired device's deviceType).
+LK_CUBICDETECTOR_SENSORS: dict[str, SensorEntityDescription] = {
+    "currentBattery": SensorEntityDescription(
+        key="currentBattery",
+        name="Battery Voltage",
+        icon="mdi:battery",
+        # Not a 0-100 percentage despite the field's name - confirmed
+        # against a real device, which reports its raw battery voltage in
+        # millivolts (e.g. 2976 for a fresh cell), not a charge percentage.
+        device_class=SensorDeviceClass.VOLTAGE,
+        unit_of_measurement=UnitOfElectricPotential.MILLIVOLT,
+        native_unit_of_measurement=UnitOfElectricPotential.MILLIVOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+        translation_key="detector_battery_voltage_sensor",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    "currentHumidity": SensorEntityDescription(
+        key="currentHumidity",
+        name="Humidity",
+        icon="mdi:water-percent",
+        device_class=SensorDeviceClass.HUMIDITY,
+        unit_of_measurement=PERCENTAGE,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        translation_key="detector_humidity_sensor",
+    ),
+    "ambientTemp": SensorEntityDescription(
+        key="tempAmbient",
+        name="Ambient Temperature",
+        icon="mdi:thermometer",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        unit_of_measurement="°C",
+        native_unit_of_measurement="°C",
+        state_class=SensorStateClass.MEASUREMENT,
+        translation_key="detector_temp_ambient_sensor",
+    ),
+    "lastStatus": SensorEntityDescription(
+        key="lastStatus",
+        name="Last Device Report",
+        icon="mdi:information-outline",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="detector_last_status_sensor",
+    ),
+    "cacheUpdated": SensorEntityDescription(
+        key="cacheUpdated",
+        name="Cache Updated",
+        icon="mdi:information-outline",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="detector_cache_updated_sensor",
+        entity_registry_enabled_default=False,
+    ),
+    "leak.leakState": SensorEntityDescription(
+        key="leak.leakState",
+        name="Leak State",
+        icon="mdi:water-off",
+        device_class=None,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="detector_leak_state_sensor",
+    ),
+    "leak.meanFlow": SensorEntityDescription(
+        key="leak.meanFlow",
+        name="Leak Mean Flow",
+        icon="mdi:water-off",
+        device_class=None,
+        unit_of_measurement="L/h",
+        native_unit_of_measurement="L/h",
+        state_class=SensorStateClass.MEASUREMENT,
+        translation_key="detector_leak_mean_flow_sensor",
+        entity_registry_enabled_default=False,
+    ),
+    "leak.dateStartedAt": SensorEntityDescription(
+        key="leak.dateStartedAt",
+        name="Leak Date Started At",
+        icon="mdi:calendar-start",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="detector_leak_date_started_at_sensor",
+        entity_registry_enabled_default=False,
+    ),
+    "leak.dateUpdatedAt": SensorEntityDescription(
+        key="leak.dateUpdatedAt",
+        name="Leak Date Updated At",
+        icon="mdi:calendar-sync",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="detector_leak_date_updated_at_sensor",
+        entity_registry_enabled_default=False,
+    ),
+    "leak.acknowledged": SensorEntityDescription(
+        key="leak.acknowledged",
+        name="Leak Acknowledged",
+        icon="mdi:check-circle-outline",
+        device_class=None,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="detector_leak_acknowledged_sensor",
+        entity_registry_enabled_default=False,
+    ),
+}
+LK_CUBICDETECTOR_CONFIG_SENSORS: dict[str, SensorEntityDescription] = {
+    "firmwareVersion": SensorEntityDescription(
+        key="firmwareVersion",
+        name="Firmware Version",
+        icon="mdi:chip",
+        device_class=None,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="detector_firmware_version_sensor",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    "hardwareVersion": SensorEntityDescription(
+        key="hardwareVersion",
+        name="Hardware Version",
+        icon="mdi:chip",
+        device_class=None,
+        unit_of_measurement=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        translation_key="detector_hardware_version_sensor",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
 }

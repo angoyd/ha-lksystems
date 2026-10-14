@@ -456,6 +456,95 @@ class TestCubicSecureMeasurement:
         assert manager.cubic_secure_measurement is None
 
 
+class TestCubicDetectorMeasurement:
+    """Mirrors TestCubicSecureMeasurement - a Cubic Detector has its own
+    endpoint family (service/cubic/detector/...) and its own property."""
+
+    async def test_force_update_selects_endpoint(self, manager):
+        with aioresponses() as m:
+            m.get(
+                BASE_URL + "service/cubic/detector/detector-1/measurement/1",
+                payload={"currentHumidity": 431.0},
+                status=200,
+            )
+            async with manager:
+                result = await manager.get_cubic_detector_measurement(
+                    "detector-1", force_update=True
+                )
+
+        assert result is True
+        assert manager.cubic_detector_measurement == {"currentHumidity": 431.0}
+
+    async def test_without_force_update_selects_endpoint(self, manager):
+        with aioresponses() as m:
+            m.get(
+                BASE_URL + "service/cubic/detector/detector-1/measurement/0",
+                payload={"currentHumidity": 0.0},
+                status=200,
+            )
+            async with manager:
+                result = await manager.get_cubic_detector_measurement("detector-1")
+
+        assert result is True
+        assert manager.cubic_detector_measurement == {"currentHumidity": 0.0}
+
+    async def test_error_status_returns_false_and_keeps_state(self, manager):
+        with aioresponses() as m:
+            m.get(
+                BASE_URL + "service/cubic/detector/detector-1/measurement/0",
+                status=404,
+            )
+            async with manager:
+                result = await manager.get_cubic_detector_measurement("detector-1")
+
+        assert result is False
+        assert manager.cubic_detector_measurement is None
+
+
+class TestCubicDetectorConfiguration:
+    """Mirrors TestCubicDetectorMeasurement for the configuration endpoint."""
+
+    async def test_force_update_selects_endpoint(self, manager):
+        with aioresponses() as m:
+            m.get(
+                BASE_URL + "service/cubic/detector/detector-1/configuration/1",
+                payload={"firmwareVersion": "0.4.0"},
+                status=200,
+            )
+            async with manager:
+                result = await manager.get_cubic_detector_configuration(
+                    "detector-1", force_update=True
+                )
+
+        assert result is True
+        assert manager.cubic_detector_configuration == {"firmwareVersion": "0.4.0"}
+
+    async def test_without_force_update_selects_endpoint(self, manager):
+        with aioresponses() as m:
+            m.get(
+                BASE_URL + "service/cubic/detector/detector-1/configuration/0",
+                payload={"firmwareVersion": "0.3.0"},
+                status=200,
+            )
+            async with manager:
+                result = await manager.get_cubic_detector_configuration("detector-1")
+
+        assert result is True
+        assert manager.cubic_detector_configuration == {"firmwareVersion": "0.3.0"}
+
+    async def test_error_status_returns_false_and_keeps_state(self, manager):
+        with aioresponses() as m:
+            m.get(
+                BASE_URL + "service/cubic/detector/detector-1/configuration/0",
+                status=404,
+            )
+            async with manager:
+                result = await manager.get_cubic_detector_configuration("detector-1")
+
+        assert result is False
+        assert manager.cubic_detector_configuration is None
+
+
 class TestCubicSecureSetThresholds:
     async def test_posts_to_the_real_plural_endpoint(self, manager):
         """The real API endpoint is /thresholds (plural) - confirmed

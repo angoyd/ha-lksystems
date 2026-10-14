@@ -29,7 +29,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 import homeassistant.util.dt as dt_util
 
-from . import CubicSecureEntityMixin, LKSystemCoordinator
+from . import CubicDetectorEntityMixin, CubicSecureEntityMixin, LKSystemCoordinator
 from .const import (
     C_NEXT_UPDATE_TIME,
     C_UPDATE_TIME,
@@ -37,6 +37,8 @@ from .const import (
     INTEGRATION_NAME,
     LK_CUBICSECURE_SENSORS,
     LK_CUBICSECURE_CONFIG_SENSORS,
+    LK_CUBICDETECTOR_SENSORS,
+    LK_CUBICDETECTOR_CONFIG_SENSORS,
 )
 from .restore import (
     ATTR_LAST_SUCCESSFUL_CLOUD_FETCH,
@@ -186,6 +188,30 @@ async def async_setup_entry(
                 )
 
                 async_add_entities(cubic_entities, True)
+
+            if device_title.get("deviceType") == "cubicdetector":
+                device_identity = device_title.get("identity")
+                _LOGGER.debug(
+                    "Setting up LK Cubic Detector sensors for %s",
+                    coordinator.data["cubic_detector_devices"][device_identity][
+                        "machine_info"
+                    ]["zone"]["zoneName"],
+                )
+                detector_entities = [
+                    LKCubicDetectorSensor(coordinator, description, device_identity)
+                    for description in LK_CUBICDETECTOR_SENSORS.values()
+                ]
+                detector_entities.extend(
+                    LKCubicDetectorSensor(
+                        coordinator,
+                        description,
+                        device_identity,
+                        data_source="configuration",
+                    )
+                    for description in LK_CUBICDETECTOR_CONFIG_SENSORS.values()
+                )
+
+                async_add_entities(detector_entities, True)
 
             # Collect all hubs
             if device_title.get("deviceType") == "arc-hub":
@@ -1039,6 +1065,147 @@ class LKCubicSensor(AbstractLkCubicSensor):
                     value = value.get(key, None)
                     if value is None:
                         break
+
+        if value is not None and self.device_class == SensorDeviceClass.TIMESTAMP:
+            try:
+                return dt_util.utc_from_timestamp(float(value))
+            except (ValueError, TypeError):
+                pass
+
+        return value
+
+
+class AbstractLkCubicDetectorSensor(
+    CubicDetectorEntityMixin,
+    RestoredNativeValueMixin,
+    CoordinatorEntity[LKSystemCoordinator],
+    RestoreSensor,
+):
+    """Abstract class for an LK Cubic Detector sensor.
+
+    Mirrors AbstractLkCubicSensor, reading from coordinator.data's
+    "cubic_detector_devices" instead of "cubic_devices" - kept as its own
+    class rather than parametrizing the Secure one so a future change to
+    either device's shape can't accidentally affect the other.
+    """
+
+    def __init__(
+        self,
+        coordinator: LKSystemCoordinator,
+        description: SensorEntityDescription,
+        device_identity: str,
+    ) -> None:
+        """Initialize the sensor."""
+        _LOGGER.debug("Creating %s sensor", description.name)
+        super().__init__(coordinator)
+        self._coordinator = coordinator
+        self._device_identity = device_identity
+        self.entity_description = description
+        self.native_unit_of_measurement = description.native_unit_of_measurement
+        self._attr_unique_id = f"LkUid_{description.key}_{device_identity}"
+        self._attr_extra_state_attributes = {}
+
+    def _cubic_detector_configuration(self) -> dict:
+        """Return this device's last-fetched configuration dict."""
+        device_data = self._coordinator.data.get("cubic_detector_devices", {}).get(
+            self._device_identity, {}
+        )
+        return device_data.get("configuration") or {}
+
+
+class LKCubicDetectorSensor(AbstractLkCubicDetectorSensor):
+    """Representation of a LK Cubic Detector sensor."""
+
+    def __init__(
+        self,
+        coordinator: LKSystemCoordinator,
+        description: SensorEntityDescription,
+        device_identity: str,
+        data_source: str = "measurement",
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator=coordinator,
+            description=description,
+            device_identity=device_identity,
+        )
+        self._data_source = data_source
+        self._data_key = description.key
+        self._attr_extra_state_attributes = {}
+
+        if "update_time" in self._coordinator.data:
+            self._attr_extra_state_attributes.update(
+                {C_UPDATE_TIME: self._coordinator.data["update_time"]}
+            )
+        if "next_update_time" in self._coordinator.data:
+            self._attr_extra_state_attributes.update(
+                {C_NEXT_UPDATE_TIME: self._coordinator.data["next_update_time"]}
+            )
+        self._update_last_successful_cloud_fetch_attribute()
+        self._attr_available = False
+
+    async def async_update(self) -> None:
+        """Get the latest data and updates the states."""
+        self._attr_available = True
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Get the latest data and updates the states."""
+        if "update_time" in self._coordinator.data:
+            self._attr_extra_state_attributes.update(
+                {C_UPDATE_TIME: self._coordinator.data["update_time"]}
+            )
+        if "next_update_time" in self._coordinator.data:
+            self._attr_extra_state_attributes.update(
+                {C_NEXT_UPDATE_TIME: self._coordinator.data["next_update_time"]}
+            )
+        self._update_last_successful_cloud_fetch_attribute()
+        super()._handle_coordinator_update()
+
+    def _update_last_successful_cloud_fetch_attribute(self) -> None:
+        self._attr_extra_state_attributes.update(
+            last_successful_cloud_fetch_attributes(
+                self.coordinator.last_successful_cloud_fetch
+            )
+        )
+
+    def _live_native_value(self) -> Any | None:
+        """Get the latest state value from the coordinator's live data."""
+        value = None
+        device_data = self._coordinator.data.get("cubic_detector_devices", {}).get(
+            self._device_identity, {}
+        )
+
+        if self._data_source == "configuration":
+            detector_configuration = self._cubic_detector_configuration()
+            if self._data_key in detector_configuration:
+                value = detector_configuration[self._data_key]
+            elif "." in self._data_key:
+                keys = self._data_key.split(".")
+                value = detector_configuration
+                for key in keys:
+                    value = value.get(key, None)
+                    if value is None:
+                        break
+        elif self._data_source == "measurement":
+            detector_last_measurement = device_data.get("last_measurement") or {}
+            if self._data_key in detector_last_measurement:
+                value = detector_last_measurement[self._data_key]
+            elif "." in self._data_key:
+                keys = self._data_key.split(".")
+                value = detector_last_measurement
+                for key in keys:
+                    value = value.get(key, None)
+                    if value is None:
+                        break
+
+            # currentHumidity is reported in tenths of a percent, not a
+            # whole percentage - confirmed against a real device (431 ==
+            # 43.1%, matching nearby rooms' humidity on the same day) and
+            # consistent with this same field on Arc devices (see
+            # LKArcSensorEntity._live_native_value's own "/10" handling).
+            if value is not None and self._data_key == "currentHumidity":
+                value = float(value) / 10
 
         if value is not None and self.device_class == SensorDeviceClass.TIMESTAMP:
             try:
