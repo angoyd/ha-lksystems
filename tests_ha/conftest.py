@@ -91,6 +91,8 @@ class FakeLKSystemsManager:
         self.hub_devices: dict = {}
         self.cubic_secure_measurement: dict | None = None
         self.cubic_secure_configuration: dict | None = None
+        self.cubic_detector_measurement: dict | None = None
+        self.cubic_detector_configuration: dict | None = None
 
         # Per-call canned data, keyed by device/hub identity. Tests set
         # these before triggering a coordinator update.
@@ -105,6 +107,14 @@ class FakeLKSystemsManager:
         # single-device tests can keep using the simpler singular fields.
         self.cubic_measurements_by_device: dict[str, dict] = {}
         self.cubic_configurations_by_device: dict[str, dict] = {}
+        # Same per-device-override shape as the Cubic Secure fields above,
+        # for a Cubic Detector (no valve - no cached-vs-live distinction
+        # needed, since nothing here mirrors muteLeak's bypass-drops-a-field
+        # quirk).
+        self.cubic_detector_measurements_by_device: dict[str, dict] = {}
+        self.cubic_detector_configurations_by_device: dict[str, dict] = {}
+        self.cubic_detector_measurement_data: dict | None = None
+        self.cubic_detector_configuration_data: dict | None = None
         # Per-device override for what get_cubic_secure_configuration returns
         # when *not* force_update - distinct from cubic_configurations_by_device
         # above (used otherwise, and always when force_update=True) - lets
@@ -120,6 +130,8 @@ class FakeLKSystemsManager:
         self.get_hub_devices_result = True
         self.get_cubic_secure_measurement_result = True
         self.get_cubic_secure_configuration_result = True
+        self.get_cubic_detector_measurement_result = True
+        self.get_cubic_detector_configuration_result = True
         self.cubic_secure_set_thresholds_result = True
         self.cubic_secure_set_pressure_test_schedule_result = True
         # Simulates a real fetch taking a while - e.g. pylksystems
@@ -216,6 +228,32 @@ class FakeLKSystemsManager:
                 )
         return self.get_cubic_secure_configuration_result
 
+    async def get_cubic_detector_measurement(self, device_identity, force_update=False):
+        self.calls.append(
+            ("get_cubic_detector_measurement", device_identity, force_update)
+        )
+        if self.get_cubic_detector_measurement_result:
+            self.cubic_detector_measurement = (
+                self.cubic_detector_measurements_by_device.get(
+                    device_identity, self.cubic_detector_measurement_data
+                )
+            )
+        return self.get_cubic_detector_measurement_result
+
+    async def get_cubic_detector_configuration(
+        self, device_identity, force_update=False
+    ):
+        self.calls.append(
+            ("get_cubic_detector_configuration", device_identity, force_update)
+        )
+        if self.get_cubic_detector_configuration_result:
+            self.cubic_detector_configuration = (
+                self.cubic_detector_configurations_by_device.get(
+                    device_identity, self.cubic_detector_configuration_data
+                )
+            )
+        return self.get_cubic_detector_configuration_result
+
     async def set_thermostat_temperature(self, device_id, temperature):
         self.calls.append(("set_thermostat_temperature", device_id, temperature))
         return self.set_thermostat_temperature_result
@@ -266,6 +304,7 @@ class FakeLKSystemsManager:
 
 CUBIC_IDENTITY = "cubic-secure-1"
 CUBIC_IDENTITY_2 = "cubic-secure-2"
+CUBIC_DETECTOR_IDENTITY = "cubic-detector-1"
 THERMOSTAT_MAC = "AA:BB:CC:DD:EE:01"
 SENSOR_MAC = "AA:BB:CC:DD:EE:02"
 HUB_IDENTITY = "arc-hub-1"
@@ -389,6 +428,24 @@ def build_user_structure_with_two_cubic_devices() -> dict:
             "deviceType": "cubicsecure",
             "deviceRole": "cubicsecure",
             "zone": {"zoneId": "zone-cubic-2", "zoneName": "Garage"},
+        }
+    )
+    return structure
+
+
+def build_user_structure_with_cubic_detector() -> dict:
+    """Same as build_user_structure(), but with a Cubic Detector machine
+    also registered under the same property - the no-valve, battery-
+    powered leak/humidity sensor variant, alongside the Cubic Secure.
+    """
+    structure = build_user_structure()
+    structure["realestateMachines"].append(
+        {
+            "identity": CUBIC_DETECTOR_IDENTITY,
+            "deviceGroup": "cubic",
+            "deviceType": "cubicdetector",
+            "deviceRole": "cubicdetector",
+            "zone": {"zoneId": "zone-cubic-detector", "zoneName": "Kitchen"},
         }
     )
     return structure
@@ -537,6 +594,42 @@ def build_cubic_measurement(volume_total: int = 45000) -> dict:
     }
 
 
+def build_cubic_detector_measurement(
+    current_battery: int = 2976, current_humidity: float = 431.0
+) -> dict:
+    """A Cubic Detector's measurement - no valve/water fields, unlike
+    build_cubic_measurement(). Defaults are the values confirmed against a
+    real device: currentBattery is raw millivolts (not a 0-100 percentage
+    despite the field name) and currentHumidity is in tenths of a percent
+    (431 == 43.1%) - see sensor.py's LKCubicDetectorSensor for the
+    corresponding scaling/unit handling these defaults exercise.
+    """
+    return {
+        "cacheUpdated": int(time.time()),
+        "currentBattery": current_battery,
+        "currentHumidity": current_humidity,
+        "tempAmbient": 229,
+        "lastStatus": int(time.time()),
+        "leak": {
+            "leakState": "noLeak",
+            "meanFlow": 0.0,
+            "dateStartedAt": int(time.time()),
+            "dateUpdatedAt": int(time.time()),
+            "acknowledged": False,
+        },
+    }
+
+
+def build_cubic_detector_configuration(
+    firmware_version: str = "0.4.0", hardware_version: str = "1"
+) -> dict:
+    return {
+        "cacheUpdated": int(time.time()),
+        "firmwareVersion": firmware_version,
+        "hardwareVersion": hardware_version,
+    }
+
+
 def build_thresholds(
     *,
     pressure_sensitivity: float = 0.3,
@@ -630,6 +723,24 @@ def configure_fake_manager_with_two_cubic_devices(manager: FakeLKSystemsManager)
     manager.cubic_configurations_by_device = {
         CUBIC_IDENTITY: build_cubic_configuration(valve_state="open"),
         CUBIC_IDENTITY_2: build_cubic_configuration(valve_state="closed"),
+    }
+
+
+def configure_fake_manager_with_cubic_detector(manager: FakeLKSystemsManager) -> None:
+    """Populate a FakeLKSystemsManager with one Cubic Secure and one Cubic
+    Detector device registered under the same property (see
+    build_user_structure_with_cubic_detector()).
+    """
+    manager.user_structure = [build_user_structure_with_cubic_detector()]
+    manager.measurements_by_device = build_measurements_by_device()
+    manager.hub_devices_by_hub = build_hub_devices_by_hub()
+    manager.cubic_measurement_data = build_cubic_measurement()
+    manager.cubic_configuration_data = build_cubic_configuration()
+    manager.cubic_detector_measurements_by_device = {
+        CUBIC_DETECTOR_IDENTITY: build_cubic_detector_measurement()
+    }
+    manager.cubic_detector_configurations_by_device = {
+        CUBIC_DETECTOR_IDENTITY: build_cubic_detector_configuration()
     }
 
 
@@ -747,6 +858,16 @@ def fake_manager_with_two_cubic_devices() -> FakeLKSystemsManager:
     """
     manager = FakeLKSystemsManager()
     configure_fake_manager_with_two_cubic_devices(manager)
+    return manager
+
+
+@pytest.fixture
+def fake_manager_with_cubic_detector() -> FakeLKSystemsManager:
+    """A FakeLKSystemsManager pre-populated with one Cubic Secure and one
+    Cubic Detector device registered under the same property.
+    """
+    manager = FakeLKSystemsManager()
+    configure_fake_manager_with_cubic_detector(manager)
     return manager
 
 
