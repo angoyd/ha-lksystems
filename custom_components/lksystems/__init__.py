@@ -79,6 +79,7 @@ PLATFORMS = [
     Platform.BUTTON,
     Platform.VALVE,
     Platform.SWITCH,
+    Platform.TIME,
 ]
 
 
@@ -1722,6 +1723,26 @@ def cubic_secure_thresholds(
     ) or {}
 
 
+def cubic_secure_pressure_test_schedule(
+    coordinator: LKSystemCoordinator, device_identity: str
+) -> dict[str, Any] | None:
+    """Return a Cubic Secure device's currently configured pressure-test
+    schedule ({"hour": int, "minute": int}), or None until the first
+    successful configuration fetch.
+
+    Read off the regular configuration poll rather than a separate
+    control-endpoint fetch: confirmed empirically against a real device
+    that pressureTestSchedule is server-side-tracked like muteLeak or
+    thresholds - a write already lands in this cached field within the
+    same poll cycle, so there's no separate live/cached distinction to
+    track for it (see set_pressure_test_schedule_for_serial's own
+    docstring for the write side of this).
+    """
+    return cubic_secure_configuration(coordinator, device_identity).get(
+        "pressureTestSchedule"
+    )
+
+
 def cubic_secure_latest_pressure_test_report(
     coordinator: LKSystemCoordinator, device_identity: str
 ) -> dict[str, Any] | None:
@@ -1733,6 +1754,8 @@ def cubic_secure_latest_pressure_test_report(
     regular poll - see that method's own docstring for why."""
     cubic_device = coordinator.data["cubic_devices"][device_identity]
     return cubic_device.get("latest_pressure_test_report")
+
+
 def cubic_secure_device_info(
     coordinator: LKSystemCoordinator, device_identity: str
 ) -> DeviceInfo:
