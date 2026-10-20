@@ -32,16 +32,16 @@ A comment must describe the code as it currently stands - never narrate a diff (
 
 Once a change's tests are green, do a dedicated pass over the diff for naming, duplication, function shape, and comment hygiene before considering it done - TDD only verifies correctness, it doesn't catch those on its own.
 
-## Migrating Cubic Secure accessors out of `__init__.py`
+## Migrating device-specific accessors out of `__init__.py`
 
-`__init__.py`'s free-function accessors (`cubic_secure_configuration`, `cubic_secure_thresholds`, `cubic_secure_pressure_test_schedule`, `cubic_secure_device_identities`, `cubic_secure_device_info`, and similar - pure reads off `LKSystemCoordinator.data`, not the coordinator class itself or anything that fetches/writes) are a recurring merge-conflict hotspot: concurrent feature PRs tend to append a new one at the same spot. Rather than one disruptive reorg PR that every in-flight branch would have to rebase through, these move out to `custom_components/lksystems/cubic_secure.py` incrementally:
+`__init__.py` accumulates free-function accessors scoped to one device type - pure reads off `LKSystemCoordinator.data` for that type, not the coordinator class itself or anything that fetches/writes. Cubic Secure's (`cubic_secure_configuration`, `cubic_secure_thresholds`, `cubic_secure_pressure_test_schedule`, `cubic_secure_device_identities`, `cubic_secure_device_info`) and Arc's (`arc_device_actuators`) are a recurring merge-conflict hotspot: concurrent feature PRs tend to append a new one at the same spot - confirmed for Cubic Secure, where two independent PRs both landed a new accessor right next to an existing one. Rather than one disruptive reorg PR that every in-flight branch would have to rebase through, each device type's accessors move out to their own module - `cubic_secure.py` for Cubic Secure, `arc.py` for Arc - incrementally:
 
-- Writing a *new* such accessor? Define it in `cubic_secure.py` directly, not `__init__.py`.
-- Already touching an *existing* one for an unrelated change? Move it to `cubic_secure.py` as part of that edit instead of leaving it behind. Don't go out of your way to relocate an untouched one just to migrate it - the move only happens as a side effect of work that was going to touch that function anyway, never as its own dedicated pass.
-- `__init__.py` re-exports whatever's moved (`from .cubic_secure import cubic_secure_configuration, ...`) so every other module's existing `from . import cubic_secure_x` keeps working unchanged - don't update call sites just because the definition moved.
-- `cubic_secure.py` only needs `LKSystemCoordinator` for type hints; import it under `TYPE_CHECKING` there to avoid a circular import with `__init__.py`.
+- Writing a *new* such accessor? Define it in that device type's module directly, not `__init__.py`.
+- Already touching an *existing* one for an unrelated change? Move it to that module as part of that edit instead of leaving it behind. Don't go out of your way to relocate an untouched one just to migrate it - the move only happens as a side effect of work that was going to touch that function anyway, never as its own dedicated pass.
+- `__init__.py` re-exports whatever's moved (e.g. `from .cubic_secure import cubic_secure_configuration, ...`, `from .arc import arc_device_actuators, ...`) so every other module's existing `from . import <name>` keeps working unchanged - don't update call sites just because the definition moved.
+- Each module only needs `LKSystemCoordinator` for type hints; import it under `TYPE_CHECKING` there to avoid a circular import with `__init__.py`.
 
-Once no such accessor remains defined in `__init__.py`, drop this section and `__init__.py`'s re-export shim, and have callers import from `cubic_secure.py` directly.
+Once a device type has no such accessor left in `__init__.py`, drop its own re-export shim and have callers import from its module directly; once every device type has migrated, drop this section too.
 
 ## Verify against the real API before documenting behavior
 
