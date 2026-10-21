@@ -63,6 +63,19 @@ class TestLogin:
 
         assert manager.jwt_token is None
 
+    async def test_rate_limited_raises_rate_limited(self, manager):
+        # A 429 on the login POST says nothing about whether the
+        # credentials are correct - must be raised as its own distinct
+        # exception, never treated the same as a genuine credential
+        # rejection by a caller.
+        with aioresponses() as m:
+            m.post(BASE_URL + "auth/auth/login", payload={}, status=429)
+            async with manager:
+                with pytest.raises(pylksystems.RateLimited):
+                    await manager.login()
+
+        assert manager.jwt_token is None
+
     async def test_userid_lookup_failure_returns_false(self, manager):
         with aioresponses() as m:
             m.post(
