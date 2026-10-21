@@ -13,7 +13,12 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import CubicSecureEntityMixin, LKSystemCoordinator, cubic_secure_device_identities
+from . import (
+    CubicSecureEntityMixin,
+    LKSystemCoordinator,
+    arc_device_actuators,
+    cubic_secure_device_identities,
+)
 from .const import DOMAIN
 
 
@@ -108,12 +113,9 @@ class LKActuatorBinarySensor(CoordinatorEntity[LKSystemCoordinator], BinarySenso
 
     def _actuator_state(self) -> int | None:
         """Return this actuator's reported state, or None if it isn't reported."""
-        for device in self.coordinator.data.get("devices", []):
-            if device.get("mac") != self._mac:
-                continue
-            for actuator in (device.get("measurement") or {}).get("actuators") or []:
-                if actuator.get("n") == self._actuator_number:
-                    return actuator.get("s")
+        for actuator in arc_device_actuators(self.coordinator, self._mac):
+            if actuator.get("n") == self._actuator_number:
+                return actuator.get("s")
         return None
 
     @property
