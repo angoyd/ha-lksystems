@@ -84,6 +84,15 @@ LEAK_DETECTION_EXPIRY_MAX_RETRY_SECONDS: Final = 180
 # trusted for this window; past it, the cloud is trusted again.
 LEAK_DETECTION_LOCAL_WRITE_GRACE_SECONDS: Final = 60
 
+# The device's own tempAmbient reading runs hot because the device
+# generates heat itself; LK confirmed the app subtracts a fixed 5
+# degrees from the raw value to better reflect actual room temperature,
+# and that this fixed offset is their own best compromise across
+# installation environments rather than a per-device calibration. This
+# integration applies the same correction so the Ambient Temperature
+# sensor matches what the LK app shows for the same device.
+CUBIC_SECURE_AMBIENT_TEMP_SELF_HEATING_CORRECTION_C: Final = 5.0
+
 
 LK_CUBICSECURE_SENSORS: dict[str, SensorEntityDescription] = {
     "volumetotalday": SensorEntityDescription(

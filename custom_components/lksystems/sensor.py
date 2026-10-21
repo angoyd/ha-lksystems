@@ -37,6 +37,7 @@ from . import (
 from .const import (
     C_NEXT_UPDATE_TIME,
     C_UPDATE_TIME,
+    CUBIC_SECURE_AMBIENT_TEMP_SELF_HEATING_CORRECTION_C,
     DOMAIN,
     INTEGRATION_NAME,
     LK_CUBICSECURE_SENSORS,
@@ -1050,6 +1051,9 @@ class LKCubicSensor(AbstractLkCubicSensor):
                     value = value.get(key, None)
                     if value is None:
                         break
+
+        if value is not None and self._data_key == "tempAmbient":
+            value -= CUBIC_SECURE_AMBIENT_TEMP_SELF_HEATING_CORRECTION_C
 
         if value is not None and self.device_class == SensorDeviceClass.TIMESTAMP:
             try:
