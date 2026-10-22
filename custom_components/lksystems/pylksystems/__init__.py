@@ -164,6 +164,18 @@ class InvalidAuth(LKSystemsError):
     """
 
 
+class RateLimited(LKSystemsError):
+    """Raised when LK Systems rate-limits the login request itself (a 429
+    on the login request).
+
+    Distinct from InvalidAuth: a 429 says nothing about whether the
+    credentials are correct, only that LK Systems is temporarily refusing
+    the request. login() does not retry on it - it surfaces immediately
+    so a caller can tell "try again shortly" apart from "the password is
+    wrong".
+    """
+
+
 class LKLeakThresholds(TypedDict):
     """Leak thresholds structure"""
 
@@ -467,6 +479,13 @@ class LKSystemsManager:
                         "Unauthorized: Check your LK Systems authentication credentials"
                     )
                     raise InvalidAuth("LK Systems rejected the provided credentials")
+
+                if response.status == RATE_LIMIT_STATUS:
+                    _LOGGER.warning(
+                        "Rate limited (429) by LK Systems API on login. URL: %s",
+                        self.BASE_URL + endpoint,
+                    )
+                    raise RateLimited("LK Systems rate-limited the login request")
 
                 _LOGGER.error("Unexpected HTTP status code: %s", response.status)
                 return False

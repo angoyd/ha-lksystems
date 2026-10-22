@@ -183,6 +183,65 @@ async def test_reauth_invalid_auth_reshows_form_with_error(hass, fake_manager):
     assert result["errors"] == {"base": "invalid_auth"}
 
 
+async def test_reauth_invalid_credentials_reported_as_invalid_auth_not_unknown(
+    hass, fake_manager
+):
+    """A genuine 401 (pylksystems.InvalidAuth) during reauth must surface
+    as invalid_auth, not fall through to the generic unknown-error
+    branch."""
+    entry = MockConfigEntry(domain=DOMAIN, data=USER_INPUT)
+    entry.add_to_hass(hass)
+    fake_manager.login_raises_invalid_auth = True
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+        data=entry.data,
+    )
+
+    with patch(
+        "custom_components.lksystems.config_flow.LKSystemsManager",
+        return_value=fake_manager,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_USERNAME: USER_INPUT[CONF_USERNAME], CONF_PASSWORD: "wrong"},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth"
+    assert result["errors"] == {"base": "invalid_auth"}
+
+
+async def test_reauth_rate_limited_reshows_form_with_rate_limited_error(
+    hass, fake_manager
+):
+    """A 429 on login during reauth must not be reported as invalid_auth -
+    the new password may well be correct."""
+    entry = MockConfigEntry(domain=DOMAIN, data=USER_INPUT)
+    entry.add_to_hass(hass)
+    fake_manager.login_raises_rate_limited = True
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+        data=entry.data,
+    )
+
+    with patch(
+        "custom_components.lksystems.config_flow.LKSystemsManager",
+        return_value=fake_manager,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_USERNAME: USER_INPUT[CONF_USERNAME], CONF_PASSWORD: "new-password"},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth"
+    assert result["errors"] == {"base": "rate_limited"}
+
+
 def test_every_abort_reason_has_a_translation_string():
     """An abort reason with no strings.json entry shows the bare Python
     identifier to the user instead of a readable message - confirmed live,
@@ -233,6 +292,10 @@ async def test_config_flow_text_resolves_through_the_real_translation_loader(has
     assert (
         translations["component.lksystems.config.error.unknown"]
         == "Unexpected error"
+    )
+    assert (
+        translations["component.lksystems.config.error.rate_limited"]
+        == "Rate limited by LK Systems - wait a few minutes and try again."
     )
     assert (
         translations["component.lksystems.config.abort.reauth_successful"]

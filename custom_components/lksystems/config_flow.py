@@ -14,7 +14,7 @@ from homeassistant.exceptions import HomeAssistantError
 import homeassistant.helpers.config_validation as cv
 
 # Import at the module level
-from .pylksystems import LKSystemsManager
+from .pylksystems import InvalidAuth, LKSystemsManager, RateLimited
 from .const import CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -80,19 +80,21 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         # Validate the credentials
+        error_key = None
         try:
             await validate_input(self.hass, user_input)
         except InvalidAuth:
-            return self.async_show_form(
-                step_id="reauth",
-                data_schema=REAUTH_SCHEMA,
-                errors={"base": "invalid_auth"},
-            )
+            error_key = "invalid_auth"
+        except RateLimited:
+            error_key = "rate_limited"
         except Exception:
+            error_key = "unknown"
+
+        if error_key:
             return self.async_show_form(
                 step_id="reauth",
                 data_schema=REAUTH_SCHEMA,
-                errors={"base": "unknown"},
+                errors={"base": error_key},
             )
 
         # Update entry with new credentials
@@ -180,6 +182,3 @@ class OptionsFlowHandler(OptionsFlow):
 class CannotConnect(HomeAssistantError):
     """Error to indicate we cannot connect."""
 
-
-class InvalidAuth(HomeAssistantError):
-    """Error to indicate there is invalid auth."""
