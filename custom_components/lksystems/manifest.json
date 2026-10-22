@@ -2,6 +2,10 @@
   "domain": "lksystems",
   "name": "LK Systems",
   "after_dependencies": ["logbook"],
+  "categories": [
+    "water.meters_leak_detection",
+    "climate.thermostats_heating"
+  ],
   "codeowners": [
     "@angoyd"
   ],
