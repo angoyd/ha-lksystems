@@ -2,5 +2,9 @@
     "name": "LK Systems (Cubic Secure and Arc)",
     "homeassistant": "2025.1.1",
     "render_readme": true,
-    "country": ["ALL"]
+    "country": ["ALL"],
+     "categories": [
+      "water.meters_leak_detection",
+      "climate.thermostats_heating"
+      ]
   }
