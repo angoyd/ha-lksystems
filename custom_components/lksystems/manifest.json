@@ -15,9 +15,5 @@
   "single_config_entry": true,
   "ssdp": [],
   "version": "1.0.0",
-  "zeroconf": [],
-  "categories": [
-    "water.meters_leak_detection",
-    "climate.thermostats_heating"
-  ]
+  "zeroconf": []
 }
