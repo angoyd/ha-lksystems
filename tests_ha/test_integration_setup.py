@@ -92,6 +92,20 @@ async def test_cubic_secure_sensors_reflect_client_data(hass, fake_manager):
     assert hass.states.get(valve_id).state == "open"
 
 
+async def test_cubic_secure_ambient_temperature_applies_self_heating_correction(
+    hass, fake_manager
+):
+    """LK confirmed the device's own tempAmbient reading runs 5 degrees hot
+    from the device's own heat output, and the app subtracts that fixed
+    offset - this integration must match it rather than showing the raw
+    reading the app itself doesn't."""
+    await _setup_entry(hass, fake_manager)
+
+    ambient_id = _entity_id(hass, "sensor", f"LkUid_tempAmbient_{CUBIC_IDENTITY}")
+
+    assert hass.states.get(ambient_id).state == "205.0"
+
+
 async def test_cubic_sensors_survive_a_configuration_fetch_failure(
     hass, fake_manager
 ):
@@ -200,7 +214,7 @@ async def test_login_failure_during_setup_starts_a_reauth_flow_for_this_entry(
     prompt, not just a background flow nothing points at - which needs the
     started flow's context to carry this entry's own entry_id, the same
     way HA's own ConfigEntry.async_start_reauth() does it."""
-    fake_manager.login_result = False
+    fake_manager.login_raises_invalid_auth = True
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={CONF_USERNAME: "user@example.com", CONF_PASSWORD: "hunter2"},

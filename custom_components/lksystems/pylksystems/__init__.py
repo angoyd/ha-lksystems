@@ -147,7 +147,6 @@ def _device_from_machine(machine, cache_updated):
     return device_data
 
 
-# Add the missing LKSystemsError class
 class LKSystemsError(Exception):
     """Exception raised for LK Systems related errors."""
 
@@ -155,9 +154,26 @@ class LKSystemsError(Exception):
 
 
 class InvalidAuth(LKSystemsError):
-    """Exception raised for authentication errors."""
+    """Raised when LK Systems rejects the login credentials themselves (a
+    401 on the login request).
 
-    pass
+    Deliberately not raised for any other login-flow failure - a
+    connection error, a timeout, or the follow-up userid lookup failing -
+    none of those prove the password is wrong, so login() returns False
+    for them instead, leaving it to the caller to treat as transient.
+    """
+
+
+class RateLimited(LKSystemsError):
+    """Raised when LK Systems rate-limits the login request itself (a 429
+    on the login request).
+
+    Distinct from InvalidAuth: a 429 says nothing about whether the
+    credentials are correct, only that LK Systems is temporarily refusing
+    the request. login() does not retry on it - it surfaces immediately
+    so a caller can tell "try again shortly" apart from "the password is
+    wrong".
+    """
 
 
 class LKLeakThresholds(TypedDict):
@@ -464,7 +480,14 @@ class LKSystemsManager:
                     _LOGGER.error(
                         "Unauthorized: Check your LK Systems authentication credentials"
                     )
-                    return False
+                    raise InvalidAuth("LK Systems rejected the provided credentials")
+
+                if response.status == RATE_LIMIT_STATUS:
+                    _LOGGER.warning(
+                        "Rate limited (429) by LK Systems API on login. URL: %s",
+                        self.BASE_URL + endpoint,
+                    )
+                    raise RateLimited("LK Systems rate-limited the login request")
 
                 _LOGGER.error("Unexpected HTTP status code: %s", response.status)
                 return False

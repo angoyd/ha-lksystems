@@ -28,6 +28,7 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.lksystems.const import DOMAIN
+from custom_components.lksystems.pylksystems import InvalidAuth, RateLimited
 
 pytest_plugins = "pytest_homeassistant_custom_component"
 
@@ -93,6 +94,7 @@ class FakeLKSystemsManager:
         self.cubic_secure_configuration: dict | None = None
         self.cubic_detector_measurement: dict | None = None
         self.cubic_detector_configuration: dict | None = None
+        self.cubic_secure_pressure_test_reports: dict | None = None
 
         # Per-call canned data, keyed by device/hub identity. Tests set
         # these before triggering a coordinator update.
@@ -121,9 +123,23 @@ class FakeLKSystemsManager:
         # tests simulate the real API's own server-side cache (the bypass=0
         # path) serving a stale snapshot independently of the live value.
         self.cubic_configurations_cached_by_device: dict[str, dict] = {}
+        # Per-device canned response for get_cubic_secure_pressure_test_reports -
+        # defaults to an empty report list, matching a device with no
+        # captured pressure-test history yet.
+        self.cubic_pressure_test_reports_by_device: dict[str, dict] = {}
 
         # Configurable outcomes for each call, so tests can force failures.
         self.login_result = True
+        # When True, login() raises InvalidAuth instead of returning
+        # login_result - simulates LK Systems rejecting the credentials
+        # outright (a 401 on the login request itself), as opposed to
+        # login_result = False, which simulates every other login-flow
+        # failure (connection errors, a failed userid lookup) that don't
+        # prove the password is wrong.
+        self.login_raises_invalid_auth = False
+        # When True, login() raises RateLimited instead of returning
+        # login_result - simulates a 429 on the login request itself.
+        self.login_raises_rate_limited = False
         self.get_user_structure_result = True
         self.get_device_measurement_result = True
         self.get_device_configuration_result = True
@@ -133,6 +149,7 @@ class FakeLKSystemsManager:
         self.get_cubic_detector_measurement_result = True
         self.get_cubic_detector_configuration_result = True
         self.cubic_secure_set_thresholds_result = True
+        self.get_cubic_secure_pressure_test_reports_result = True
         self.cubic_secure_set_pressure_test_schedule_result = True
         # Simulates a real fetch taking a while - e.g. pylksystems
         # honoring a long Retry-After from LK's own rate limiter, which
@@ -160,6 +177,10 @@ class FakeLKSystemsManager:
 
     async def login(self):
         self.calls.append(("login",))
+        if self.login_raises_invalid_auth:
+            raise InvalidAuth("LK Systems rejected the provided credentials")
+        if self.login_raises_rate_limited:
+            raise RateLimited("LK Systems rate-limited the login request")
         if self.login_result:
             self.jwt_token = "fake-jwt-token"
             self.refresh_token = "fake-refresh-token"
@@ -253,6 +274,16 @@ class FakeLKSystemsManager:
                 )
             )
         return self.get_cubic_detector_configuration_result
+
+    async def get_cubic_secure_pressure_test_reports(self, cubic_identity):
+        self.calls.append(("get_cubic_secure_pressure_test_reports", cubic_identity))
+        if self.get_cubic_secure_pressure_test_reports_result:
+            self.cubic_secure_pressure_test_reports = (
+                self.cubic_pressure_test_reports_by_device.get(
+                    cubic_identity, {"reports": []}
+                )
+            )
+        return self.get_cubic_secure_pressure_test_reports_result
 
     async def set_thermostat_temperature(self, device_id, temperature):
         self.calls.append(("set_thermostat_temperature", device_id, temperature))
@@ -683,11 +714,35 @@ def build_cubic_configuration(
         "hardwareVersion": 4,
         "muteLeak": mute_leak,
         "thresholds": thresholds if thresholds is not None else build_thresholds(),
-        "pressureTestSchedule": (
-            pressure_test_schedule
-            if pressure_test_schedule is not None
-            else {"hour": 4, "minute": 0}
-        ),
+        # None by default (rather than a real schedule) so a test that
+        # doesn't care about pressure-test scheduling doesn't
+        # unknowingly get LKSystemCoordinator._schedule_pressure_test_result_check()'s
+        # background timer scheduled underneath it - only tests that
+        # pass this explicitly opt into that.
+        "pressureTestSchedule": pressure_test_schedule,
+    }
+
+
+def build_pressure_test_report(
+    *,
+    timestamp_start: int,
+    outcome: str = "successNoLeak",
+    duration: int | None = 45,
+    pressure_delta: int | None = -20,
+    pressure_start: int = 3900,
+    temperature_start: float = 20.0,
+) -> dict:
+    """One pressure-test report as
+    service/cubic/secure/{id}/pressure-test-reports/{bypass} returns it -
+    field values confirmed against a real account's report history."""
+    return {
+        "deviceId": "device-under-test",
+        "timestampStart": timestamp_start,
+        "pressureStart": pressure_start,
+        "temperatureStart": temperature_start,
+        "outcome": outcome,
+        "duration": duration,
+        "pressureDelta": pressure_delta,
     }
 
 

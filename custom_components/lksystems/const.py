@@ -91,6 +91,15 @@ LEAK_DETECTION_EXPIRY_MAX_RETRY_SECONDS: Final = 180
 # trusted for this window; past it, the cloud is trusted again.
 LEAK_DETECTION_LOCAL_WRITE_GRACE_SECONDS: Final = 60
 
+# The device's own tempAmbient reading runs hot because the device
+# generates heat itself; LK confirmed the app subtracts a fixed 5
+# degrees from the raw value to better reflect actual room temperature,
+# and that this fixed offset is their own best compromise across
+# installation environments rather than a per-device calibration. This
+# integration applies the same correction so the Ambient Temperature
+# sensor matches what the LK app shows for the same device.
+CUBIC_SECURE_AMBIENT_TEMP_SELF_HEATING_CORRECTION_C: Final = 5.0
+
 
 LK_CUBICSECURE_SENSORS: dict[str, SensorEntityDescription] = {
     "volumetotalday": SensorEntityDescription(
@@ -560,4 +569,41 @@ LK_CUBICSECURE_THRESHOLD_FACTORY_DEFAULTS: Final[dict] = {
         "closeDelay": 90,
         "notificationDelay": 90,
     },
+}
+
+
+# After the device's own scheduled pressure-test time, wait this long
+# before the first check for a result - the write itself already lands
+# on the device well within a minute (confirmed empirically against a
+# real device's schedule-write propagation), so this is mostly slack
+# for the request itself, not for the device to notice the schedule.
+PRESSURE_TEST_RESULT_INITIAL_DELAY_SECONDS: Final = 120
+
+# Retry at this interval past the scheduled time until a report from
+# today actually shows up - a scheduled test can be postponed (water
+# flowing, valve already closed, temperature out of range) and retried
+# several times before it completes; real account history shows retry
+# chains running up to roughly half an hour past the nominal scheduled
+# time.
+PRESSURE_TEST_RESULT_RETRY_INTERVAL_SECONDS: Final = 300
+
+# Stop retrying this long past the scheduled time and wait for
+# tomorrow's occurrence instead - generous margin over the longest
+# retry chain observed in real account history.
+PRESSURE_TEST_RESULT_MAX_RETRY_SECONDS: Final = 3600
+
+# Human-readable labels for the pressure-test outcome enum - confirmed
+# empirically against a real account's full report history (108
+# records): every non-success value observed is the test not running
+# to completion this cycle (water in use, valve already shut, out-of-
+# range temperature, flow disrupted mid-test), never a detected leak.
+# An outcome not in this map falls back to the raw API value rather
+# than erroring, since a real leak may produce a value never observed
+# in this account's history.
+PRESSURE_TEST_OUTCOME_LABELS: Final[dict[str, str]] = {
+    "successNoLeak": "No Leak Detected",
+    "postponedFlow": "Postponed (Water In Use)",
+    "postponedTemperature": "Postponed (Temperature Out Of Range)",
+    "postponedValveClosed": "Postponed (Valve Closed)",
+    "disruptedFlow": "Disrupted (Flow Detected Mid-Test)",
 }
