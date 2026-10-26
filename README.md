@@ -1,6 +1,6 @@
 # Custom Home Assistant integration for LK Systems
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
+[![hacs_badge](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://hacs.xyz)
 
 ## Summary
 
@@ -29,6 +29,12 @@ The integration supports:
 ## Installation
 
 ### HACS installation
+
+LK Systems is available in the default HACS store - no custom repository needed.
+
+1. In Home Assistant, open **HACS** and search for **LK Systems**, or use the button below.
+2. Select **Download**.
+3. Restart Home Assistant.
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=angoyd&repository=ha-lksystems&category=integration)
 
