@@ -35,6 +35,7 @@ from homeassistant.helpers import config_validation as cv
 from .const import (
     ATTRIBUTION,
     CONF_UPDATE_INTERVAL,
+    CUBIC_DETECTOR_MODEL,
     CUBIC_SECURE_MODEL,
     CUBIC_SECURE_VALVE_STATE_CLOSED,
     CUBIC_SECURE_VALVE_STATE_OPEN,
@@ -89,6 +90,7 @@ class LkStructureResp(TypedDict):
 
     realestates: list["RealestateInfo"]
     cubic_devices: Dict[str, "LkCubicDeviceData"]
+    cubic_detector_devices: Dict[str, "LkCubicDetectorDeviceData"]
     update_time: str
     next_update_time: str
 
@@ -119,6 +121,20 @@ class LkCubicDeviceData(TypedDict):
     latest_pressure_test_report: "LKPressureTestReport | None"
 
 
+class LkCubicDetectorDeviceData(TypedDict):
+    """Per-Cubic-Detector-device data, keyed by device identity in
+    LkStructureResp.cubic_detector_devices - mirrors LkCubicDeviceData's
+    own per-device keying, kept separate since a Cubic Detector's
+    measurement/configuration shape differs from a Cubic Secure's (no
+    valve, no water volume/pressure/temperature; adds battery/humidity -
+    confirmed against the real API spec's DetectorMeasurements/
+    DetectorConfiguration schemas)."""
+
+    machine_info: LkStructureMachine
+    last_measurement: LkCubicDetectorResp
+    configuration: LKCubicDetectorConfigResp
+
+
 class LKCubicSecureConfigResp(TypedDict):
     """Cubic secure configuration structure"""
 
@@ -131,6 +147,16 @@ class LKCubicSecureConfigResp(TypedDict):
     links: list
     paired: dict
     muteLeak: int
+    cacheTimer: int
+    cacheUpdated: int
+
+
+class LKCubicDetectorConfigResp(TypedDict):
+    """Cubic Detector configuration structure"""
+
+    firmwareVersion: str
+    hardwareVersion: str
+    links: list
     cacheTimer: int
     cacheUpdated: int
 
@@ -187,6 +213,25 @@ class LkCubicSecureResp(TypedDict):
     tempWaterMax: float
     volumeTotal: int
     waterPressure: int
+    leak: LKLeakInfo
+    cacheUpdated: int
+
+
+class LkCubicDetectorResp(TypedDict):
+    """API response structure for a Cubic Detector's measurement - no
+    valve/water fields (it has no valve or flow meter), adds battery and
+    humidity (confirmed against the real API spec's DetectorMeasurements
+    schema)."""
+
+    serialNumber: str
+    connectionState: str
+    rssi: int
+    currentRssi: int
+    currentBattery: int
+    currentHumidity: float
+    lastStatus: int
+    type: float
+    tempAmbient: float
     leak: LKLeakInfo
     cacheUpdated: int
 
@@ -1345,6 +1390,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                         for realestate in lk_inst.user_structure
                     ],
                     "cubic_devices": {},
+                    "cubic_detector_devices": {},
                     "devices": [],
                     "device_details": {},  # Will store detailed information about each device
                     **self._schedule_timestamps(self._last_cloud_fetch_attempt),
@@ -1580,6 +1626,83 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                                 "Error fetching cubic measurements: %s", str(err)
                             )
 
+                    # For cubic detector devices (battery/moisture leak
+                    # sensors, no valve - confirmed deviceType/deviceRole
+                    # against a real paired device via diagnostics)
+                    elif (
+                        machine.get("deviceType") == "cubicdetector"
+                        and machine.get("deviceRole") == "cubicdetector"
+                    ):
+                        resp["cubic_detector_devices"][device_identity] = {
+                            "machine_info": machine
+                        }
+
+                        try:
+                            await lk_inst.get_cubic_detector_measurement(
+                                device_identity
+                            )
+
+                            if lk_inst.cubic_detector_measurement is not None:
+                                if self._should_bypass_cache(
+                                    device_identity,
+                                    forced_device_ids,
+                                    lk_inst.cubic_detector_measurement[
+                                        "cacheUpdated"
+                                    ],
+                                ):
+                                    _LOGGER.debug(
+                                        "Cubic detector measurement is stale or a fresh fetch was requested, force update"
+                                    )
+                                    if not await lk_inst.get_cubic_detector_measurement(
+                                        device_identity, force_update=True
+                                    ):
+                                        _LOGGER.error(
+                                            "Failed to get cubic detector measurement, abort update"
+                                        )
+                                        raise UpdateFailed(
+                                            "Unknown error get_cubic_detector_measurement"
+                                        )
+
+                            resp["cubic_detector_devices"][device_identity][
+                                "last_measurement"
+                            ] = lk_inst.cubic_detector_measurement
+                            if not await lk_inst.get_cubic_detector_configuration(
+                                device_identity
+                            ):
+                                _LOGGER.error(
+                                    "Failed to get cubic detector configuration, abort update"
+                                )
+                                raise UpdateFailed(
+                                    "Unknown error get_cubic_detector_configuration"
+                                )
+                            resp["cubic_detector_devices"][device_identity][
+                                "configuration"
+                            ] = lk_inst.cubic_detector_configuration
+                        except Exception as err:
+                            # Sensors index these keys directly, so they
+                            # must exist even on failure; reuse this
+                            # device's last known values if we have them.
+                            previous_device_data = (
+                                (self.data or {})
+                                .get("cubic_detector_devices", {})
+                                .get(device_identity, {})
+                            )
+                            device_entry = resp["cubic_detector_devices"][
+                                device_identity
+                            ]
+                            device_entry.setdefault(
+                                "last_measurement",
+                                previous_device_data.get("last_measurement"),
+                            )
+                            device_entry.setdefault(
+                                "configuration",
+                                previous_device_data.get("configuration"),
+                            )
+                            _LOGGER.warning(
+                                "Error fetching cubic detector measurements: %s",
+                                str(err),
+                            )
+
                 # Now directly fetch fresh measurement data for each Arc sense device
                 _LOGGER.info(
                     "Fetching direct measurements for %d Arc sense devices",
@@ -1776,6 +1899,55 @@ def cubic_secure_device_info(
         name=f"Cubic Secure {machine_info['zone']['zoneName']}",
         serial_number=device_identity,
     )
+
+
+def cubic_detector_device_identities(coordinator: LKSystemCoordinator) -> list[str]:
+    """Return the device identities of every Cubic Detector device on the account."""
+    return list(coordinator.data.get("cubic_detector_devices", {}))
+
+
+def cubic_detector_device_info(
+    coordinator: LKSystemCoordinator, device_identity: str
+) -> DeviceInfo:
+    """Build the shared DeviceInfo for a Cubic Detector device.
+
+    Mirrors cubic_secure_device_info() so every platform with an entity
+    on a Cubic Detector resolves to the same HA device.
+    """
+    machine_info = coordinator.data["cubic_detector_devices"][device_identity][
+        "machine_info"
+    ]
+    return DeviceInfo(
+        identifiers={(DOMAIN, device_identity)},
+        manufacturer=MANUFACTURER,
+        model=CUBIC_DETECTOR_MODEL,
+        name=f"Cubic Detector {machine_info['zone']['zoneName']}",
+        serial_number=device_identity,
+    )
+
+
+class CubicDetectorEntityMixin:
+    """Shared identity plumbing for every entity on a Cubic Detector device.
+
+    Mirrors CubicSecureEntityMixin - see its own docstring - but a Cubic
+    Detector has no valve or thresholds, so there's no equivalent of
+    _current_thresholds() here.
+    """
+
+    _attr_attribution = ATTRIBUTION
+    _attr_has_entity_name = True
+
+    @property
+    def available(self) -> bool:
+        """Unavailable only once failures have run
+        CONSECUTIVE_FAILURE_THRESHOLD deep - see
+        CubicSecureEntityMixin.available's own docstring for why."""
+        return self.coordinator._consecutive_failures < CONSECUTIVE_FAILURE_THRESHOLD
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device_info of the device."""
+        return cubic_detector_device_info(self.coordinator, self._device_identity)
 
 
 class CubicSecureEntityMixin:

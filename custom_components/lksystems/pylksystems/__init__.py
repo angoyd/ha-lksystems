@@ -234,8 +234,10 @@ class LKSystemsManager:
         self.jwt_token = None
         self.refresh_token = None
         self._cubic_secure_measurement = None
+        self._cubic_detector_measurement = None
         self._user_structure = None
         self._cubic_secure_configuration = None
+        self._cubic_detector_configuration = None
         self._cubic_secure_pressure_test_reports = None
         self._cubic_secure_structure = None
         self._cubic_secure_pressure_test_schedule = None
@@ -512,6 +514,26 @@ class LKSystemsManager:
     def cubic_secure_measurement(self):
         """Property for Cubic Secure measurement"""
         return self._cubic_secure_measurement
+
+    async def get_cubic_detector_measurement(
+        self, detector_identity: str, force_update=False
+    ):
+        """Fetch Cubic Detector measurement"""
+        if force_update:
+            _LOGGER.debug("Force update from LK API")
+            endpoint = f"service/cubic/detector/{detector_identity}/measurement/1"
+        else:
+            endpoint = f"service/cubic/detector/{detector_identity}/measurement/0"
+        success, res = await self._get(endpoint)
+        if success:
+            self._cubic_detector_measurement = res
+            return True
+        return False
+
+    @property
+    def cubic_detector_measurement(self):
+        """Property for Cubic Detector measurement"""
+        return self._cubic_detector_measurement
 
     async def get_user_structure(self):
         """Fetch user structure"""
@@ -1118,6 +1140,27 @@ class LKSystemsManager:
     def cubic_secure_configuration(self):
         """Property for Cubic Secure measurement"""
         return self._cubic_secure_configuration
+
+    async def get_cubic_detector_configuration(
+        self, detector_identity: str, force_update=False
+    ):
+        """Fetch Cubic Detector configuration"""
+        if force_update:
+            _LOGGER.debug("Force update from LK API")
+            endpoint = f"service/cubic/detector/{detector_identity}/configuration/1"
+        else:
+            endpoint = f"service/cubic/detector/{detector_identity}/configuration/0"
+
+        success, data = await self._get(endpoint)
+        if success:
+            self._cubic_detector_configuration = data
+            return True
+        return False
+
+    @property
+    def cubic_detector_configuration(self):
+        """Property for Cubic Detector configuration"""
+        return self._cubic_detector_configuration
 
     async def get_cubic_secure_pressure_test_reports(self, cubic_identity: str):
         """Fetch Cubic secure pressure test reports"""
