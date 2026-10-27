@@ -15,12 +15,7 @@ import homeassistant.helpers.config_validation as cv
 
 # Import at the module level
 from .pylksystems import InvalidAuth, LKSystemsManager, RateLimited
-from .const import (
-    CONF_UPDATE_INTERVAL,
-    DEFAULT_UPDATE_INTERVAL,
-    DOMAIN,
-    MINOR_VERSION_BEFORE_AVAILABILITY_FIX,
-)
+from .const import CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,7 +47,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for LK Systems."""
 
     VERSION = 1
-    MINOR_VERSION = MINOR_VERSION_BEFORE_AVAILABILITY_FIX + 1
+    MINOR_VERSION = 2
     
     # Store entry_id for reauth
     _entry_id = None
