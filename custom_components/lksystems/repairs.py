@@ -102,10 +102,9 @@ def async_create_historical_unavailable_noise_issue(
     before that fix may have that noise recorded in their history. This
     tells the user where it came from and how to optionally clean it up.
 
-    Raised unconditionally on every setup rather than tied to a live
-    condition: `_create_issue()` is a no-op once the issue already
-    exists, so this only ever surfaces once and stays dismissed once the
-    user dismisses it - there's nothing here to detect or clear.
+    Raised once, when a config entry created before that fix is migrated,
+    rather than tied to a live condition - there's nothing here to detect
+    or clear, and an entry created after the fix never had the noise.
     """
     _create_issue(
         hass, entry_id, "historical_unavailable_noise", ir.IssueSeverity.WARNING

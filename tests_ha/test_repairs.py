@@ -111,8 +111,8 @@ class TestThresholdWriteFailedIssue:
 
 class TestHistoricalUnavailableNoiseIssue:
     """Unlike every other issue kind above, this one isn't tied to a live
-    condition - it's raised unconditionally on setup and never cleared by
-    code, so its own test focuses on that create-is-idempotent contract
+    condition - it's raised from a config entry migration and never cleared
+    by code, so its own test focuses on that create-is-idempotent contract
     instead of a create/clear cycle."""
 
     async def test_create_registers_issue_with_expected_severity(self, hass):
@@ -131,8 +131,7 @@ class TestHistoricalUnavailableNoiseIssue:
 
     async def test_recreating_does_not_undo_a_user_dismissal(self, hass):
         """A user dismissing this (there's no other way to clear it) must
-        stay dismissed across every future setup, since it's recreated
-        unconditionally on each one."""
+        stay dismissed even if it's raised again for the same entry."""
         issue_id = _issue_id("historical_unavailable_noise", "entry-1")
         async_create_historical_unavailable_noise_issue(hass, "entry-1")
         ir.async_ignore_issue(hass, DOMAIN, issue_id, ignore=True)

@@ -47,6 +47,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for LK Systems."""
 
     VERSION = 1
+    MINOR_VERSION = 2
     
     # Store entry_id for reauth
     _entry_id = None

@@ -34,6 +34,11 @@ CUBIC_DETECTOR_MODEL = "Cubic Detector"
 # C_ADR = "street_address"
 CONF_UPDATE_INTERVAL = "update_interval"
 
+# Config entries created before entities stopped flapping unavailable on a
+# single failed poll carry this minor version; only those can have that
+# noise in their recorded history.
+MINOR_VERSION_BEFORE_AVAILABILITY_FIX: Final = 1
+
 # Default update interval in minutes
 DEFAULT_UPDATE_INTERVAL = 5
 

@@ -27,6 +27,7 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.lksystems.config_flow import ConfigFlow
 from custom_components.lksystems.const import DOMAIN
 from custom_components.lksystems.pylksystems import InvalidAuth, RateLimited
 
@@ -941,18 +942,24 @@ def get_issue(hass, issue_id: str):
     """Look up a repair issue by id via the issue registry."""
     return ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
 async def setup_entry(
-    hass, manager: FakeLKSystemsManager, options: dict | None = None
+    hass,
+    manager: FakeLKSystemsManager,
+    options: dict | None = None,
+    minor_version: int = ConfigFlow.MINOR_VERSION,
 ) -> MockConfigEntry:
     """Drive a real config-entry setup against a FakeLKSystemsManager.
 
     Runs the coordinator's first refresh and every platform's
     async_setup_entry() for real (see __init__.py's PLATFORMS), so tests can
-    inspect the entities/entity registry they actually produce.
+    inspect the entities/entity registry they actually produce. The entry is
+    at the config flow's current version unless minor_version says
+    otherwise, so no migration runs by default.
     """
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={CONF_USERNAME: "user@example.com", CONF_PASSWORD: "hunter2"},
         options=options or {},
+        minor_version=minor_version,
     )
     entry.add_to_hass(hass)
     with patch_coordinator_manager(manager):

@@ -45,6 +45,7 @@ from .const import (
     LEAK_DETECTION_EXPIRY_RETRY_INTERVAL_SECONDS,
     LEAK_DETECTION_LOCAL_WRITE_GRACE_SECONDS,
     MANUFACTURER,
+    MINOR_VERSION_BEFORE_AVAILABILITY_FIX,
     PRESSURE_TEST_RESULT_INITIAL_DELAY_SECONDS,
     PRESSURE_TEST_RESULT_MAX_RETRY_SECONDS,
     PRESSURE_TEST_RESULT_RETRY_INTERVAL_SECONDS,
@@ -59,6 +60,7 @@ from .pylksystems import (
     LKPressureThresholds,
     iter_realestate_machines,
 )
+from .config_flow import ConfigFlow
 from .redact import mask_username
 from . import repairs
 
@@ -2000,6 +2002,24 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate a config entry from an older version.
+
+    A newer major version than this code knows about can't be migrated
+    backwards, so setup is refused rather than guessing at its data.
+    """
+    if entry.version > ConfigFlow.VERSION:
+        return False
+
+    if entry.minor_version <= MINOR_VERSION_BEFORE_AVAILABILITY_FIX:
+        repairs.async_create_historical_unavailable_noise_issue(hass, entry.entry_id)
+
+    hass.config_entries.async_update_entry(
+        entry, version=ConfigFlow.VERSION, minor_version=ConfigFlow.MINOR_VERSION
+    )
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up LK Systems from a config entry."""
     coordinator = LKSystemCoordinator(hass, entry)
@@ -2016,7 +2036,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
-    repairs.async_create_historical_unavailable_noise_issue(hass, entry.entry_id)
 
     # Set up all platforms for this device/entry
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

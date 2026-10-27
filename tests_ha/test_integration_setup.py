@@ -17,7 +17,11 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.lksystems.const import DOMAIN
+from custom_components.lksystems.config_flow import ConfigFlow
+from custom_components.lksystems.const import (
+    DOMAIN,
+    MINOR_VERSION_BEFORE_AVAILABILITY_FIX,
+)
 
 from custom_components.lksystems.repairs import _issue_id
 
@@ -237,10 +241,51 @@ async def test_login_failure_during_setup_starts_a_reauth_flow_for_this_entry(
     )
 
 
-async def test_setup_raises_the_historical_unavailable_noise_issue(
+async def test_entry_added_through_the_config_flow_has_no_historical_unavailable_noise_issue(
     hass, fake_manager
 ):
-    entry = await _setup_entry(hass, fake_manager)
+    """A new user never ran a version with the unavailable-flapping bug, so
+    they must not be told to purge history they don't have."""
+    with patch(
+        "custom_components.lksystems.LKSystemsManager", return_value=fake_manager
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": "user"}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_USERNAME: "user@example.com", CONF_PASSWORD: "hunter2"},
+        )
+        await hass.async_block_till_done()
 
-    issue = get_issue(hass, _issue_id("historical_unavailable_noise", entry.entry_id))
-    assert issue is not None
+    entry = result["result"]
+    assert get_issue(hass, _issue_id("historical_unavailable_noise", entry.entry_id)) is None
+
+
+async def test_entry_predating_the_availability_fix_gets_the_historical_unavailable_noise_issue_on_migration(
+    hass, fake_manager
+):
+    entry = await _setup_entry(
+        hass, fake_manager, minor_version=MINOR_VERSION_BEFORE_AVAILABILITY_FIX
+    )
+
+    assert get_issue(hass, _issue_id("historical_unavailable_noise", entry.entry_id)) is not None
+    assert entry.minor_version == ConfigFlow.MINOR_VERSION
+
+
+async def test_entry_from_a_newer_major_version_is_not_set_up(hass, fake_manager):
+    """A downgrade past a major version bump can't be migrated backwards."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_USERNAME: "user@example.com", CONF_PASSWORD: "hunter2"},
+        version=ConfigFlow.VERSION + 1,
+    )
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.lksystems.LKSystemsManager", return_value=fake_manager
+    ):
+        assert not await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert get_issue(hass, _issue_id("historical_unavailable_noise", entry.entry_id)) is None
