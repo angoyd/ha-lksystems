@@ -612,6 +612,37 @@ class TestCubicSecureSetThresholds:
         assert result is False
 
 
+class TestCubicSecureAcknowledgeAlarm:
+    """The real API spec documents both 200 (a JSON array of strings) and
+    204 (no body) as success for this endpoint."""
+
+    URL = BASE_URL + "control/cubic/cubic-1/acknowledge-alarm"
+
+    async def test_200_returns_true(self, manager):
+        with aioresponses() as m:
+            m.post(self.URL, payload=["string"], status=200)
+            async with manager:
+                result = await manager.cubic_secure_acknowledge_alarm("cubic-1")
+
+        assert result is True
+
+    async def test_204_no_content_returns_true(self, manager):
+        with aioresponses() as m:
+            m.post(self.URL, status=204, body="")
+            async with manager:
+                result = await manager.cubic_secure_acknowledge_alarm("cubic-1")
+
+        assert result is True
+
+    async def test_error_status_returns_false(self, manager):
+        with aioresponses() as m:
+            m.post(self.URL, status=400)
+            async with manager:
+                result = await manager.cubic_secure_acknowledge_alarm("cubic-1")
+
+        assert result is False
+
+
 class TestThresholdsWithOverrides:
     """cubic_secure_set_thresholds() only accepts the full object at
     once - this is the one place that carry-forward logic lives, shared

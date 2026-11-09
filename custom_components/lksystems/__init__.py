@@ -195,7 +195,8 @@ class LKLeakInfo(TypedDict):
     meanFlow: float
     dateStartedAt: int
     dateUpdatedAt: int
-    acknowledged: bool
+    # The string "false" on a real device, despite the field name.
+    acknowledged: bool | str
 
 
 class LkCubicSecureResp(TypedDict):

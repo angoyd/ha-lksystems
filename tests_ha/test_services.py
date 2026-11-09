@@ -10,15 +10,22 @@ hass.services.async_call().
 
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers import device_registry as dr
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.helpers.update_coordinator import REQUEST_REFRESH_DEFAULT_COOLDOWN
+from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 
 from custom_components.lksystems.const import DOMAIN
 from custom_components.lksystems.services import (
+    acknowledge_alarm_for_serial,
     close_valve_for_serial,
     open_valve_for_serial,
     pause_leak_detection_for_serial,
@@ -29,6 +36,7 @@ from custom_components.lksystems.services import (
 from .conftest import (
     CUBIC_IDENTITY,
     build_cubic_configuration,
+    build_cubic_measurement,
     build_thresholds,
     entity_id,
     patch_all_managers,
@@ -74,6 +82,17 @@ async def test_open_valve_calls_client(hass, fake_manager):
         )
 
     assert ("cubic_secure_open_valve", CUBIC_IDENTITY) in fake_manager.calls
+
+
+async def test_acknowledge_alarm_calls_client(hass, fake_manager):
+    _, device_entry = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+
+    with patch_all_managers(fake_manager):
+        await hass.services.async_call(
+            DOMAIN, "acknowledge_alarm", {"device_id": device_entry.id}, blocking=True
+        )
+
+    assert ("cubic_secure_acknowledge_alarm", CUBIC_IDENTITY) in fake_manager.calls
 
 
 async def test_pause_leak_detection_calls_client(hass, fake_manager):
@@ -248,6 +267,191 @@ class TestValveActionForSerial:
             CUBIC_IDENTITY,
             True,
         ) in fake_manager.calls
+
+
+class TestAcknowledgeAlarmForSerial:
+    """Direct tests for acknowledge_alarm_for_serial (see
+    TestValveActionForSerial's own docstring for why - same reasoning)."""
+
+    async def test_calls_the_client(self, hass, fake_manager):
+        entry, _ = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+
+        with patch_all_managers(fake_manager):
+            result = await acknowledge_alarm_for_serial(hass, entry, CUBIC_IDENTITY)
+
+        assert result is True
+        assert ("cubic_secure_acknowledge_alarm", CUBIC_IDENTITY) in fake_manager.calls
+
+    async def test_login_failure_returns_false_and_does_not_call_the_client(
+        self, hass, fake_manager
+    ):
+        entry, _ = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+        fake_manager.login_result = False
+
+        with patch_all_managers(fake_manager):
+            result = await acknowledge_alarm_for_serial(hass, entry, CUBIC_IDENTITY)
+
+        assert result is False
+        assert not any(
+            c[0] == "cubic_secure_acknowledge_alarm" for c in fake_manager.calls
+        )
+
+    async def test_rejected_write_returns_false_and_skips_the_refresh(
+        self, hass, fake_manager
+    ):
+        entry, _ = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+        fake_manager.cubic_secure_acknowledge_alarm_result = False
+        fake_manager.calls.clear()
+
+        with patch_all_managers(fake_manager):
+            result = await acknowledge_alarm_for_serial(hass, entry, CUBIC_IDENTITY)
+
+        assert result is False
+        assert not any(
+            c[0] == "get_cubic_secure_measurement" for c in fake_manager.calls
+        )
+
+    async def test_refreshes_the_leak_measurement_bypassing_the_cache(
+        self, hass, fake_manager
+    ):
+        """The leak sensors (Leak State, Leak Acknowledged) read the
+        measurement, not the configuration, so that's what has to be
+        re-fetched for them to reflect the acknowledgement."""
+        entry, _ = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+        fake_manager.calls.clear()
+
+        with patch_all_managers(fake_manager):
+            await acknowledge_alarm_for_serial(hass, entry, CUBIC_IDENTITY)
+            # Setup's own refresh started the coordinator's request
+            # debouncer cooldown, which this refresh request waits out.
+            async_fire_time_changed(
+                hass,
+                dt_util.utcnow()
+                + timedelta(seconds=REQUEST_REFRESH_DEFAULT_COOLDOWN + 1),
+            )
+            await hass.async_block_till_done()
+
+        assert (
+            "get_cubic_secure_measurement",
+            CUBIC_IDENTITY,
+            True,
+        ) in fake_manager.calls
+
+
+class TestOpenValveAcknowledgesAnAlarmFirst:
+    """After a leak alarm closes the valve, LK's manual has the alarm
+    acknowledged before the valve is opened. Acknowledging also resets
+    every ongoing leak detection, so it must only happen for a valve an
+    alarm actually closed - never while a detection is still counting
+    down with the valve open, or during the nightly pressure test."""
+
+    async def _setup(self, hass, fake_manager, *, valve_state, leak_state, acknowledged):
+        fake_manager.cubic_measurement_data = build_cubic_measurement(
+            leak_state=leak_state, leak_acknowledged=acknowledged
+        )
+        fake_manager.cubic_configuration_data = build_cubic_configuration(
+            valve_state=valve_state
+        )
+        entry, _ = await _setup_entry_and_get_cubic_device(hass, fake_manager)
+        fake_manager.calls.clear()
+        return entry
+
+    def _write_calls(self, fake_manager):
+        return [
+            c
+            for c in fake_manager.calls
+            if c[0] in ("cubic_secure_acknowledge_alarm", "cubic_secure_open_valve")
+        ]
+
+    @pytest.mark.parametrize(
+        "acknowledged",
+        [False, "false"],
+        ids=["boolean", "string-as-the-real-api-returns-it"],
+    )
+    async def test_acknowledges_an_unacknowledged_alarm_before_opening(
+        self, hass, fake_manager, acknowledged
+    ):
+        """The real API returns leak.acknowledged as the string "false"
+        (confirmed against a real device), not the boolean the API spec's
+        field name suggests."""
+        entry = await self._setup(
+            hass,
+            fake_manager,
+            valve_state="closed",
+            leak_state="medium",
+            acknowledged=acknowledged,
+        )
+
+        with patch_all_managers(fake_manager):
+            result = await open_valve_for_serial(hass, entry, CUBIC_IDENTITY)
+
+        assert result is True
+        assert self._write_calls(fake_manager) == [
+            ("cubic_secure_acknowledge_alarm", CUBIC_IDENTITY),
+            ("cubic_secure_open_valve", CUBIC_IDENTITY),
+        ]
+        assert fake_manager.calls.count(("login",)) == 1
+
+    @pytest.mark.parametrize(
+        "valve_state,leak_state,acknowledged",
+        [
+            ("closed", "medium", True),
+            ("closed", "medium", "true"),
+            ("closed", "noLeak", False),
+            ("closed", "forceOpen", False),
+            ("open", "medium", False),
+        ],
+        ids=[
+            "already-acknowledged",
+            "already-acknowledged-string",
+            "closed-without-a-leak",
+            "leak-detection-paused",
+            "detection-still-counting-down",
+        ],
+    )
+    async def test_opens_without_acknowledging_when_no_alarm_closed_the_valve(
+        self, hass, fake_manager, valve_state, leak_state, acknowledged
+    ):
+        entry = await self._setup(
+            hass,
+            fake_manager,
+            valve_state=valve_state,
+            leak_state=leak_state,
+            acknowledged=acknowledged,
+        )
+
+        with patch_all_managers(fake_manager):
+            await open_valve_for_serial(hass, entry, CUBIC_IDENTITY)
+
+        assert self._write_calls(fake_manager) == [
+            ("cubic_secure_open_valve", CUBIC_IDENTITY)
+        ]
+
+    async def test_still_opens_when_the_acknowledgement_is_rejected(
+        self, hass, fake_manager
+    ):
+        entry = await self._setup(
+            hass, fake_manager, valve_state="closed", leak_state="medium", acknowledged=False
+        )
+        fake_manager.cubic_secure_acknowledge_alarm_result = False
+
+        with patch_all_managers(fake_manager):
+            result = await open_valve_for_serial(hass, entry, CUBIC_IDENTITY)
+
+        assert result is True
+        assert ("cubic_secure_open_valve", CUBIC_IDENTITY) in fake_manager.calls
+
+    async def test_close_never_acknowledges(self, hass, fake_manager):
+        entry = await self._setup(
+            hass, fake_manager, valve_state="closed", leak_state="medium", acknowledged=False
+        )
+
+        with patch_all_managers(fake_manager):
+            await close_valve_for_serial(hass, entry, CUBIC_IDENTITY)
+
+        assert not any(
+            c[0] == "cubic_secure_acknowledge_alarm" for c in fake_manager.calls
+        )
 
 
 class TestSetThresholdsForSerial:
@@ -508,6 +712,7 @@ async def test_close_valve_login_failure_does_not_raise(hass, fake_manager):
     [
         ("close_valve", {}, "cubic_secure_close_valve"),
         ("open_valve", {}, "cubic_secure_open_valve"),
+        ("acknowledge_alarm", {}, "cubic_secure_acknowledge_alarm"),
         ("pause_leak_detection", {"seconds": 1800}, "cubic_secure_pause_leak_detection"),
         (
             "set_pressure_test_schedule",

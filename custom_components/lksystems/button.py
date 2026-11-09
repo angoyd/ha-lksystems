@@ -15,7 +15,7 @@ from .const import (
     DOMAIN,
     LK_CUBICSECURE_THRESHOLD_FACTORY_DEFAULTS,
 )
-from .services import pause_leak_detection_for_serial
+from .services import acknowledge_alarm_for_serial, pause_leak_detection_for_serial
 
 
 async def async_setup_entry(
@@ -31,6 +31,7 @@ async def async_setup_entry(
             LKPauseLeakDetectionButton,
             LKResumeLeakDetectionButton,
             LKResetThresholdsToDefaultsButton,
+            LKAcknowledgeAlarmButton,
         )
     )
 
@@ -108,6 +109,25 @@ class LKResumeLeakDetectionButton(CoordinatorEntity[LKSystemCoordinator], _LKCub
         """Cancel this device's in-progress leak detection pause."""
         await pause_leak_detection_for_serial(
             self.hass, self.coordinator.entry, self._device_identity, 0
+        )
+
+
+class LKAcknowledgeAlarmButton(_LKCubicSecureButton):
+    """Acknowledges the device's leak alarm - see
+    LKSystemsManager.cubic_secure_acknowledge_alarm for what that does.
+
+    Always pressable, like the unit's own WATER ON/OFF button: it doesn't
+    track whether an alarm is active.
+    """
+
+    _attr_name = "Acknowledge Alarm"
+    _attr_icon = "mdi:bell-check-outline"
+    _unique_id_suffix = "acknowledge_alarm"
+
+    async def async_press(self) -> None:
+        """Acknowledge this device's leak alarm."""
+        await acknowledge_alarm_for_serial(
+            self.hass, self.coordinator.entry, self._device_identity
         )
 
 
