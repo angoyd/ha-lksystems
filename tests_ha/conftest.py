@@ -152,6 +152,7 @@ class FakeLKSystemsManager:
         self.cubic_secure_set_thresholds_result = True
         self.get_cubic_secure_pressure_test_reports_result = True
         self.cubic_secure_set_pressure_test_schedule_result = True
+        self.cubic_secure_acknowledge_alarm_result = True
         # Simulates a real fetch taking a while - e.g. pylksystems
         # honoring a long Retry-After from LK's own rate limiter, which
         # can take tens of seconds on a real device (confirmed live).
@@ -299,6 +300,10 @@ class FakeLKSystemsManager:
         if self.valve_write_delay:
             await asyncio.sleep(self.valve_write_delay)
         self.calls.append(("cubic_secure_open_valve", cubic_identity))
+
+    async def cubic_secure_acknowledge_alarm(self, cubic_identity):
+        self.calls.append(("cubic_secure_acknowledge_alarm", cubic_identity))
+        return self.cubic_secure_acknowledge_alarm_result
 
     async def cubic_secure_pause_leak_detection(self, cubic_identity, seconds):
         self.calls.append(
@@ -605,7 +610,11 @@ def build_hub_devices_by_hub() -> dict:
     }
 
 
-def build_cubic_measurement(volume_total: int = 45000) -> dict:
+def build_cubic_measurement(
+    volume_total: int = 45000,
+    leak_state: str = "NoLeak",
+    leak_acknowledged: bool | str = False,
+) -> dict:
     return {
         "cacheUpdated": int(time.time()),
         "volumeTotalDay": 120,
@@ -617,11 +626,11 @@ def build_cubic_measurement(volume_total: int = 45000) -> dict:
         "tempAmbient": 210,
         "lastStatus": int(time.time()),
         "leak": {
-            "leakState": "NoLeak",
+            "leakState": leak_state,
             "meanFlow": 0.0,
             "dateStartedAt": int(time.time()),
             "dateUpdatedAt": int(time.time()),
-            "acknowledged": False,
+            "acknowledged": leak_acknowledged,
         },
     }
 

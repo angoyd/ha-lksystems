@@ -58,6 +58,20 @@ open_valve:
         device:
           integration: "lksystems"
       required: true
+acknowledge_alarm:
+  name: Acknowledge alarm
+  description: >-
+    Acknowledge a leak alarm, like the MyLK app or one press of the unit's
+    WATER ON/OFF button. This also resets every ongoing leak detection.
+    Open valve already does this when a leak alarm closed the valve.
+  fields:
+    device_id:
+      name: Device id
+      description: The device id of the LK Systems device to acknowledge the alarm on
+      selector:
+        device:
+          integration: "lksystems"
+      required: true
 set_pressure_test_schedule:
   name: Set pressure test schedule
   description: Set the schedule for pressure tests

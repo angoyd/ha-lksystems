@@ -51,7 +51,9 @@ TRANSIENT_ERROR_MAX_RETRIES = 3
 TRANSIENT_ERROR_BACKOFF_SECONDS = 2.0
 
 _GET_SUCCESS_STATUSES = frozenset({200})
-_POST_SUCCESS_STATUSES = frozenset({200, 201})
+# The API spec lists 204 No Content as a success response for every
+# control POST, alongside 200.
+_POST_SUCCESS_STATUSES = frozenset({200, 201, 204})
 
 
 def _rate_limit_backoff(response) -> float:
@@ -1221,6 +1223,14 @@ class LKSystemsManager:
         if success:
             return True
         return False
+
+    async def cubic_secure_acknowledge_alarm(self, cubic_identity: str) -> bool:
+        """Acknowledge the device's leak alarm, as the MyLK app or one press
+        of the unit's WATER ON/OFF button does. Per LK's manual this also
+        resets every ongoing leak detection."""
+        endpoint = f"control/cubic/{cubic_identity}/acknowledge-alarm"
+        success, _ = await self._post(endpoint, {})
+        return success
 
     async def cubic_secure_pause_leak_detection(
         self, cubic_identity: str, seconds: int = 3600

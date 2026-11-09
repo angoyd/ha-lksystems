@@ -48,6 +48,10 @@ def _reset_thresholds_button_unique_id(device_identity: str) -> str:
     return f"LkUid_reset_thresholds_to_defaults_{device_identity}"
 
 
+def _acknowledge_alarm_button_unique_id(device_identity: str) -> str:
+    return f"LkUid_acknowledge_alarm_{device_identity}"
+
+
 async def test_belongs_to_the_cubic_secure_device(hass, fake_manager):
     await setup_entry(hass, fake_manager)
     button_entity_id = entity_id(hass, "button", _button_unique_id(CUBIC_IDENTITY))
@@ -328,3 +332,54 @@ class TestResetThresholdsToDefaultsButton:
             await asyncio.sleep(0.05)
 
         assert hass.states.get(button_entity_id).state != "unavailable"
+
+
+class TestAcknowledgeAlarmButton:
+    async def test_belongs_to_the_cubic_secure_device(self, hass, fake_manager):
+        await setup_entry(hass, fake_manager)
+        button_entity_id = entity_id(
+            hass, "button", _acknowledge_alarm_button_unique_id(CUBIC_IDENTITY)
+        )
+
+        device = dr.async_get(hass).async_get_device(
+            identifiers={(DOMAIN, CUBIC_IDENTITY)}
+        )
+        entry = er.async_get(hass).async_get(button_entity_id)
+
+        assert entry.device_id == device.id
+
+    async def test_press_acknowledges_the_alarm(self, hass, fake_manager):
+        await setup_entry(hass, fake_manager)
+        button_entity_id = entity_id(
+            hass, "button", _acknowledge_alarm_button_unique_id(CUBIC_IDENTITY)
+        )
+
+        with patch_all_managers(fake_manager):
+            await hass.services.async_call(
+                "button", "press", {"entity_id": button_entity_id}, blocking=True
+            )
+
+        assert (
+            "cubic_secure_acknowledge_alarm",
+            CUBIC_IDENTITY,
+        ) in fake_manager.calls
+
+    async def test_two_cubic_secure_devices_have_independent_buttons(
+        self, hass, fake_manager_with_two_cubic_devices
+    ):
+        await setup_entry(hass, fake_manager_with_two_cubic_devices)
+        second_button = entity_id(
+            hass, "button", _acknowledge_alarm_button_unique_id(CUBIC_IDENTITY_2)
+        )
+
+        with patch_all_managers(fake_manager_with_two_cubic_devices):
+            await hass.services.async_call(
+                "button", "press", {"entity_id": second_button}, blocking=True
+            )
+
+        acknowledged = [
+            c
+            for c in fake_manager_with_two_cubic_devices.calls
+            if c[0] == "cubic_secure_acknowledge_alarm"
+        ]
+        assert acknowledged == [("cubic_secure_acknowledge_alarm", CUBIC_IDENTITY_2)]

@@ -1,4 +1,5 @@
 from .pylksystems import LKSystemsManager, LKThresholds, thresholds_with_overrides
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 import logging
 from typing import NamedTuple
@@ -14,6 +15,7 @@ from .const import (
     DEFAULT_PAUSE_LEAK_DETECTION_SECONDS,
     DOMAIN,
 )
+from .cubic_secure import cubic_secure_alarm_awaits_acknowledgement
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -113,23 +115,51 @@ async def pause_leak_detection_for_serial(
         _LOGGER.error("Error pausing leak detection: %s", e)
 
 
+async def acknowledge_alarm_for_serial(
+    hass: HomeAssistant, entry: ConfigEntry, serial_number: str
+) -> bool:
+    """Log in and acknowledge one device's leak alarm.
+
+    Shared by the acknowledge_alarm service handler below and button.py's
+    "Acknowledge Alarm" button, for the same reason as
+    pause_leak_detection_for_serial. On success it requests a cache-
+    bypassing refresh of the device's measurement, which is what the leak
+    sensors (Leak State, Leak Acknowledged) read.
+
+    Returns whether the API accepted the acknowledgement.
+    """
+    _LOGGER.info("Acknowledging leak alarm for %s", serial_number)
+    try:
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+
+        async with _service_write_session(entry) as lk_inst:
+            acknowledged = await lk_inst.cubic_secure_acknowledge_alarm(serial_number)
+        if acknowledged:
+            await coordinator.async_request_forced_refresh(serial_number)
+        return acknowledged
+    except _ServiceLoginFailed:
+        return False
+    except Exception as e:
+        _LOGGER.error("Error acknowledging leak alarm: %s", e)
+        return False
+
+
+_ValveWrite = Callable[[LKSystemsManager, str], Awaitable[object]]
+
+
 async def _set_valve_state_for_serial(
     hass: HomeAssistant,
     entry: ConfigEntry,
     serial_number: str,
     action: str,
-    write_method_name: str,
+    write: _ValveWrite,
 ) -> bool:
-    """Log in, write the valve's requested state (by calling
-    `write_method_name` on the session's client), and confirm it by
-    reusing the same session for one immediate read - shared body for
-    close_valve_for_serial/open_valve_for_serial below.
+    """Log in, run `write` with the session's client, and confirm the
+    valve's new state by reusing the same session for one immediate read -
+    shared body for close_valve_for_serial/open_valve_for_serial below.
 
-    Takes the write's method name rather than a bound/unbound method
-    reference: the LKSystemsManager class itself gets replaced with a
-    mock in tests, so resolving the method against the real *instance*
-    each call (via getattr) is what keeps this working under test rather
-    than silently calling through to the wrong object.
+    `write` takes the client as an argument because the client only exists
+    once the session is open.
 
     Returns whether the write itself was issued (a real login and API
     call happened), not whether the valve has already reached the
@@ -141,7 +171,7 @@ async def _set_valve_state_for_serial(
         coordinator = hass.data[DOMAIN][entry.entry_id]
 
         async with _service_write_session(entry) as lk_inst:
-            await getattr(lk_inst, write_method_name)(serial_number)
+            await write(lk_inst, serial_number)
             await coordinator.force_cubic_secure_configuration_update_with_client(
                 lk_inst, serial_number
             )
@@ -164,16 +194,41 @@ async def close_valve_for_serial(
     the service call layer.
     """
     return await _set_valve_state_for_serial(
-        hass, entry, serial_number, "Closing", "cubic_secure_close_valve"
+        hass,
+        entry,
+        serial_number,
+        "Closing",
+        lambda lk_inst, serial: lk_inst.cubic_secure_close_valve(serial),
     )
 
 
 async def open_valve_for_serial(
     hass: HomeAssistant, entry: ConfigEntry, serial_number: str
 ) -> bool:
-    """Open one device's valve - see close_valve_for_serial's own docstring."""
+    """Open one device's valve - see close_valve_for_serial's own docstring.
+
+    If a leak alarm closed the valve and is still unacknowledged, it is
+    acknowledged first in the same session: LK's manual has an alarm
+    acknowledged before the valve is opened again. Whether the API
+    refuses to open without it is not confirmed against a real device, so
+    a rejected acknowledgement doesn't stop the open attempt.
+    """
+
+    async def acknowledge_any_alarm_then_open(
+        lk_inst: LKSystemsManager, serial: str
+    ) -> None:
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+        if cubic_secure_alarm_awaits_acknowledgement(
+            coordinator, serial
+        ) and not await lk_inst.cubic_secure_acknowledge_alarm(serial):
+            _LOGGER.warning(
+                "Acknowledging the leak alarm for %s failed, opening the valve anyway",
+                serial,
+            )
+        await lk_inst.cubic_secure_open_valve(serial)
+
     return await _set_valve_state_for_serial(
-        hass, entry, serial_number, "Opening", "cubic_secure_open_valve"
+        hass, entry, serial_number, "Opening", acknowledge_any_alarm_then_open
     )
 
 
@@ -298,6 +353,15 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         await open_valve_for_serial(hass, entry, sn)
 
     @callback
+    async def acknowledge_alarm(call: ServiceCall) -> None:
+        """Handle the service action call."""
+        device_id = call.data.get("device_id")
+        sn = _get_serial_number(hass, device_id)
+        if not sn:
+            return
+        await acknowledge_alarm_for_serial(hass, entry, sn)
+
+    @callback
     async def set_pressure_test_schedule(call: ServiceCall) -> None:
         """Handle the service action call."""
         device_id = call.data.get("device_id")
@@ -376,6 +440,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
     hass.services.async_register(DOMAIN, "pause_leak_detection", pause_leak_detection)
     hass.services.async_register(DOMAIN, "close_valve", close_valve)
     hass.services.async_register(DOMAIN, "open_valve", open_valve)
+    hass.services.async_register(DOMAIN, "acknowledge_alarm", acknowledge_alarm)
     hass.services.async_register(
         DOMAIN, "set_pressure_test_schedule", set_pressure_test_schedule
     )

@@ -54,6 +54,10 @@ PAUSE_LEAK_DETECTION_MAX_SECONDS: Final = 86400
 # device), not just this integration's own placeholder.
 CUBIC_SECURE_VALVE_STATE_CLOSED: Final = "closed"
 CUBIC_SECURE_VALVE_STATE_OPEN: Final = "open"
+# Leak states that never carry an alarm to acknowledge: no leak, and leak
+# detection paused (forceOpen) - both seen on a real device. Lower-cased,
+# since LK's casing isn't confirmed for every state.
+CUBIC_SECURE_LEAK_STATES_WITHOUT_ALARM: Final = frozenset({"noleak", "forceopen"})
 
 # After an open/close write, poll the cloud at this interval until it
 # confirms the valve actually reached the requested state - the physical
